@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: paytrack-gateway
+eureka:
+  client:
+    service-url:
+      defaultZone: http://registry:8761/eureka/

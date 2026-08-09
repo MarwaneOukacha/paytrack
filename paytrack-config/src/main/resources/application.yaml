@@ -1,0 +1,18 @@
+server:
+  port: 8888
+
+spring:
+  application:
+    name: paytrack-config
+  cloud:
+    config:
+      server:
+        native:
+          search-locations: classpath:/configurations
+  profiles:
+    active: native
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://registry:8761/eureka

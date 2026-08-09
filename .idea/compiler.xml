@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CompilerConfiguration">
+    <annotationProcessing>
+      <profile name="Maven default annotation processors profile" enabled="true">
+        <sourceOutputDir name="target/generated-sources/annotations" />
+        <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
+        <outputRelativeToContentRoot value="true" />
+        <module name="fraud-service" />
+        <module name="paytrack-config" />
+        <module name="paytrack-gateway" />
+        <module name="payment-service" />
+        <module name="paytrack-registry" />
+        <module name="paytrack-shared" />
+      </profile>
+    </annotationProcessing>
+  </component>
+  <component name="JavacSettings">
+    <option name="ADDITIONAL_OPTIONS_OVERRIDE">
+      <module name="fraud-service" options="-parameters" />
+      <module name="payment-service" options="-parameters" />
+      <module name="paytrack-config" options="-parameters" />
+      <module name="paytrack-gateway" options="-parameters" />
+      <module name="paytrack-registry" options="-parameters" />
+      <module name="paytrack-shared" options="-parameters" />
+    </option>
+  </component>
+</project>
