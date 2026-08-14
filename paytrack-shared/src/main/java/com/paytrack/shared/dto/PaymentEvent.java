@@ -12,14 +12,14 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Data
-@Builder
 @NoArgsConstructor
-@AllArgsConstructor
 public class PaymentEvent {
-    private UUID paymentId;
-    private String accountId;
-    private BigDecimal amount;
-    private String description;
+
+    private UUID        paymentId;
+    private String      accountId;          // fromAccountNumber
+    private String      toAccountNumber;    // destination
+    private BigDecimal  amount;
+    private String      currency;
     private PaymentStatus status;
-    private LocalDateTime createdAt;
+    private String      description;
 }
