@@ -1,6 +1,5 @@
 package com.paytrack.fraudservice.dao;
 
-import com.paytrack.fraudservice.entity.FraudAlert;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Repository;

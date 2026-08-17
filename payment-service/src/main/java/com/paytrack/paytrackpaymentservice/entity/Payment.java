@@ -15,7 +15,7 @@ public class Payment {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
-
+    private String toAccountNumber;
     @Column(name = "account_id", nullable = false)
     private String accountId;
 

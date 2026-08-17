@@ -8,8 +8,5 @@ public interface PaymentService {
 
     TransferResponse initiateTransfer(TransferRequest request);
 
-    void markDebitProcessed(String paymentId);
 
-    @Transactional
-    void markDebitFailed(String paymentId);
 }

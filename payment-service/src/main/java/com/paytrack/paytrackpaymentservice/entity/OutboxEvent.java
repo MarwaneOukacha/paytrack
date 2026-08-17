@@ -16,6 +16,7 @@ public class OutboxEvent {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+
     // Topic Kafka cible : "payment.initiated", "payment.processed"...
     @Column(nullable = false)
     private String topic;

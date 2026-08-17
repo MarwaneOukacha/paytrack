@@ -17,7 +17,6 @@ public interface TransferMapper {
     @Mapping(target = "amount",           source = "request.amount")
     @Mapping(target = "description",      source = "request.description")
     @Mapping(target = "status",           constant = "PENDING")
-    @Mapping(target = "type",             constant = "DEBIT")
     @Mapping(target = "createdAt",        ignore = true)
     @Mapping(target = "updatedAt",        ignore = true)
     Payment toDebitPayment(TransferRequest request);
@@ -40,7 +39,6 @@ public interface TransferMapper {
     @Mapping(target = "amount",           source = "amount")
     @Mapping(target = "description",      expression = "java(\"Virement reçu — \" + description)")
     @Mapping(target = "status",           constant = "PROCESSED")
-    @Mapping(target = "type",             constant = "CREDIT")
     @Mapping(target = "createdAt",        ignore = true)
     @Mapping(target = "updatedAt",        ignore = true)
     Payment toCreditPayment(
