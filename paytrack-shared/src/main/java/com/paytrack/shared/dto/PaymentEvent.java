@@ -1,6 +1,5 @@
 package com.paytrack.shared.dto;
 
-
 import com.paytrack.shared.enums.PaymentStatus;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -12,14 +11,14 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Data
+@Builder
 @NoArgsConstructor
+@AllArgsConstructor
 public class PaymentEvent {
-
-    private UUID        paymentId;
-    private String      accountId;          // fromAccountNumber
-    private String      toAccountNumber;    // destination
-    private BigDecimal  amount;
-    private String      currency;
+    private UUID paymentId;
+    private String accountId;
+    private BigDecimal amount;
+    private String description;
     private PaymentStatus status;
-    private String      description;
+    private LocalDateTime createdAt;
 }

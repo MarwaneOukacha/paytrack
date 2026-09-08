@@ -16,7 +16,6 @@ public interface FraudMapper {
     @Mapping(target = "amount", source = "evaluation.amount")
     @Mapping(target = "currency", source = "evaluation.currency")
     @Mapping(target = "status", source = "originalEvent.status")
-    @Mapping(target = "toAccountNumber", source = "originalEvent.toAccountNumber")
     @Mapping(target = "description", source = "originalEvent.description")
     FraudEvent toFraudEvent(FraudEvaluation evaluation, PaymentEvent originalEvent);
 }

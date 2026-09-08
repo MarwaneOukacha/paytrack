@@ -41,9 +41,9 @@ public class PaymentConsumer {
 
         // 3. Retrieve destination account
         Account destination = accountRepository
-                .findByAccountNumber(event.getToAccountNumber())
+                .findByAccountNumber(event.getAccountId())
                 .orElseThrow(() -> new IllegalArgumentException(
-                        "Destination account not found: " + event.getToAccountNumber()
+                        "Destination account not found: " + event.getAccountId()
                 ));
 
         source.setBalance(source.getBalance().subtract(event.getAmount()));

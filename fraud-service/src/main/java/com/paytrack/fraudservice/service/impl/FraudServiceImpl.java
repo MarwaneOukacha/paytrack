@@ -68,7 +68,6 @@ public class FraudServiceImpl implements FraudService {
                 .paymentId(event.getPaymentId())
                 .accountId(event.getAccountId())
                 .amount(event.getAmount())
-                .currency(event.getCurrency())
                 .decision(decision)
                 .reason(reason)
                 .build();

@@ -96,9 +96,9 @@ public class PaymentServiceImp implements PaymentService {
 
             paymentEvent.setPaymentId(savedPayment.getId());
             paymentEvent.setAccountId(request.getFromAccountNumber());
-            paymentEvent.setToAccountNumber(request.getToAccountNumber());
+            paymentEvent.setAccountId(request.getToAccountNumber());
             paymentEvent.setAmount(request.getAmount());
-            paymentEvent.setCurrency(source.getCurrency());
+            //paymentEvent.setCurrency(source.getCurrency());
             paymentEvent.setStatus(PaymentStatus.PENDING);
             paymentEvent.setDescription(request.getDescription());
 
@@ -145,7 +145,7 @@ public class PaymentServiceImp implements PaymentService {
         }
 
         failedEvent.setAccountId(request.getFromAccountNumber());
-        failedEvent.setToAccountNumber(request.getToAccountNumber());
+        failedEvent.setAccountId(request.getToAccountNumber());
         failedEvent.setAmount(request.getAmount());
 
         failedEvent.setStatus(PaymentStatus.FAILED);
