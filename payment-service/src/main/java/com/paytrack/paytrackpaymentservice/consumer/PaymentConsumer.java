@@ -64,7 +64,7 @@ public class PaymentConsumer {
     }
     @KafkaListener(
             topics = "payment.failed",
-            groupId = "payment-service"
+            groupId = "payment-group"
     )
     public void handleFailedPayment(PaymentEvent event) {
 
@@ -73,7 +73,11 @@ public class PaymentConsumer {
                 event.getPaymentId(),
                 event.getDescription()
         );
-
+        if (event.getPaymentId() == null) {
+            log.info("payment.failed event with no paymentId — from={} reason={}",
+                    event.getAccountId(), event.getDescription());
+            return;
+        }
         paymentRepository.findById(event.getPaymentId())
                 .ifPresent(payment -> {
 

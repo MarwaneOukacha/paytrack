@@ -145,7 +145,7 @@ public class PaymentServiceImp implements PaymentService {
         }
 
         failedEvent.setAccountId(request.getFromAccountNumber());
-        failedEvent.setAccountId(request.getToAccountNumber());
+        failedEvent.setToAccountNumber(request.getToAccountNumber());
         failedEvent.setAmount(request.getAmount());
 
         failedEvent.setStatus(PaymentStatus.FAILED);
