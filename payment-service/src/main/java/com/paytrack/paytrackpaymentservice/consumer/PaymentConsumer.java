@@ -62,13 +62,15 @@ public class PaymentConsumer {
         kafkaTemplate.send("fraud.fraud-check", String.valueOf(event.getPaymentId()), event);
         log.info("Payment forwarded to fraud-check — paymentId={}", event.getPaymentId());
     }
+
+
     @KafkaListener(
             topics = "payment.failed",
             groupId = "payment-group"
     )
     public void handleFailedPayment(PaymentEvent event) {
 
-        log.warn(
+        log.info(
                 "Received payment.failed — paymentId={} | reason={}",
                 event.getPaymentId(),
                 event.getDescription()
@@ -91,7 +93,7 @@ public class PaymentConsumer {
                     );
                 });
     }
-    @KafkaListener(topics = "payment.fraud-check", groupId = "payment-service")
+    @KafkaListener(topics = "payment.fraud-check", groupId = "payment-group")
     @Transactional
     public void handleFraudResult(FraudEvent event,
                                   @Header(KafkaHeaders.RECEIVED_PARTITION) int partition) {

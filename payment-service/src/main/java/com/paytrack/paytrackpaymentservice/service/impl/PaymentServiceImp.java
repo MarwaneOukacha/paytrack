@@ -127,9 +127,8 @@ public class PaymentServiceImp implements PaymentService {
 
             // Publish FAILED event
             publishFailedEvent(request, savedPayment, exception);
-
-            // IMPORTANT: rethrow so the transaction rolls back
             throw exception;
+
         }
     }
 
@@ -154,18 +153,22 @@ public class PaymentServiceImp implements PaymentService {
                 exception.getMessage()
         );
 
-        kafkaTemplate.send(
-                FAILED_TOPIC,
-                request.getFromAccountNumber(),
-                failedEvent
-        );
+        kafkaTemplate.send(FAILED_TOPIC, request.getFromAccountNumber(), failedEvent)
+                .whenComplete((result, ex) -> {
+                    if (ex != null) {
+                        log.error("Failed to publish payment.failed — paymentId={}",
+                                payment != null ? payment.getId() : null, ex);
+                    } else {
+                        log.info("payment.failed ACKED — offset={}", result.getRecordMetadata().offset());
+                    }
+                });
 
         log.error(
                 "Transfer failed — from={} | to={} | reason={}",
                 request.getFromAccountNumber(),
                 request.getToAccountNumber(),
-                exception.getMessage(),
-                exception
+                exception.getMessage()
+
         );
     }
 }
