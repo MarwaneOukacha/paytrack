@@ -3,18 +3,22 @@ server:
 
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5433/frauddb
+    url: jdbc:postgresql://fraud-db:5432/frauddb
     username: postgres
     password: postgres
+
   jpa:
     hibernate:
       ddl-auto: update
     show-sql: true
+
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: kafka:29092
+
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
     consumer:
       group-id: fraud-group
       auto-offset-reset: earliest
@@ -22,11 +26,12 @@ spring:
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: "com.paytrack.shared.dto"
+
 eureka:
   client:
     service-url:
-      defaultZone: http://localhost:8761/eureka/
+      defaultZone: http://registry:8761/eureka/
+
   instance:
-    hostname: localhost
-    prefer-ip-address: true
-    ip-address: 127.0.0.1
+    hostname: fraud-service
+    prefer-ip-address: false

@@ -25,6 +25,9 @@ services:
       timeout: 5s
       retries: 5
 
+    networks:
+      - paytrack-network
+
 
   # =========================================================
   # FRAUD DATABASE
@@ -51,6 +54,9 @@ services:
       timeout: 5s
       retries: 5
 
+    networks:
+      - paytrack-network
+
 
   # =========================================================
   # ZOOKEEPER
@@ -70,6 +76,9 @@ services:
       timeout: 5s
       retries: 5
 
+    networks:
+      - paytrack-network
+
 
   # =========================================================
   # KAFKA
@@ -88,6 +97,7 @@ services:
 
     environment:
       KAFKA_BROKER_ID: 1
+
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
 
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
@@ -110,7 +120,10 @@ services:
         ]
       interval: 10s
       timeout: 10s
-      retries: 5
+      retries: 10
+
+    networks:
+      - paytrack-network
 
 
   # =========================================================
@@ -132,181 +145,224 @@ services:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
 
+    networks:
+      - paytrack-network
+
 
   # =========================================================
   # CONFIG SERVER
-  # COMMENTED - RUN LOCALLY FROM IDE
   # =========================================================
 
-  # config-server:
-  #   build:
-  #     context: ./paytrack-config
-  #
-  #   container_name: paytrack-config
-  #
-  #   ports:
-  #     - "8888:8888"
-  #
-  #   environment:
-  #     SERVER_PORT: 8888
-  #     SPRING_APPLICATION_NAME: paytrack-config
-  #
-  #   restart: on-failure
+  config-server:
+    build:
+      context: ./paytrack-config
+      dockerfile: Dockerfile
+
+    container_name: paytrack-config
+
+    ports:
+      - "8888:8888"
+
+    environment:
+      SERVER_PORT: 8888
+      SPRING_APPLICATION_NAME: paytrack-config
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --no-verbose --tries=1 --spider http://localhost:8888/actuator/health || exit 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+    restart: on-failure
+
+    networks:
+      - paytrack-network
 
 
   # =========================================================
   # EUREKA REGISTRY
-  # COMMENTED - RUN LOCALLY FROM IDE
   # =========================================================
 
-  # registry:
-  #   build:
-  #     context: ./paytrack-registry
-  #
-  #   container_name: paytrack-registry
-  #
-  #   depends_on:
-  #     config-server:
-  #       condition: service_started
-  #
-  #   ports:
-  #     - "8761:8761"
-  #
-  #   environment:
-  #     SERVER_PORT: 8761
-  #     SPRING_APPLICATION_NAME: paytrack-registry
-  #
-  #     SPRING_CONFIG_IMPORT: optional:configserver:http://config-server:8888
-  #
-  #     EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://registry:8761/eureka/
-  #
-  #   restart: on-failure
+  registry:
+    build:
+      context: ./paytrack-registry
+      dockerfile: Dockerfile
+
+    container_name: paytrack-registry
+
+    depends_on:
+      config-server:
+        condition: service_healthy
+
+    ports:
+      - "8761:8761"
+
+    environment:
+      SERVER_PORT: 8761
+      SPRING_APPLICATION_NAME: paytrack-registry
+
+      SPRING_CONFIG_IMPORT: optional:configserver:http://config-server:8888
+
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://registry:8761/eureka/
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --no-verbose --tries=1 --spider http://localhost:8761/actuator/health || exit 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+    restart: on-failure
+
+    networks:
+      - paytrack-network
 
 
   # =========================================================
   # PAYMENT SERVICE
-  # COMMENTED - RUN LOCALLY FROM IDE
   # =========================================================
 
-  # payment-service:
-  #   build:
-  #     context: ./payment-service
-  #
-  #   container_name: payment-service
-  #
-  #   depends_on:
-  #     payment-db:
-  #       condition: service_healthy
-  #
-  #     kafka:
-  #       condition: service_healthy
-  #
-  #     config-server:
-  #       condition: service_started
-  #
-  #     registry:
-  #       condition: service_started
-  #
-  #   ports:
-  #     - "8082:8080"
-  #
-  #   environment:
-  #     SERVER_PORT: 8080
-  #     SPRING_APPLICATION_NAME: payment-service
-  #
-  #     SPRING_CONFIG_IMPORT: optional:configserver:http://config-server:8888
-  #
-  #     SPRING_DATASOURCE_URL: jdbc:postgresql://payment-db:5432/paymentdb
-  #     SPRING_DATASOURCE_USERNAME: postgres
-  #     SPRING_DATASOURCE_PASSWORD: postgres
-  #
-  #     SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-  #
-  #     EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://registry:8761/eureka/
-  #
-  #   restart: on-failure
+  payment-service:
+    build:
+      context: ./payment-service
+      dockerfile: Dockerfile
+
+    container_name: payment-service
+
+    depends_on:
+      payment-db:
+        condition: service_healthy
+
+      kafka:
+        condition: service_healthy
+
+      config-server:
+        condition: service_healthy
+
+      registry:
+        condition: service_healthy
+
+    ports:
+      - "8082:8080"
+
+    environment:
+      SERVER_PORT: 8080
+
+      SPRING_APPLICATION_NAME: payment-service
+
+      SPRING_CONFIG_IMPORT: optional:configserver:http://config-server:8888
+
+      SPRING_DATASOURCE_URL: jdbc:postgresql://payment-db:5432/paymentdb
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://registry:8761/eureka/
+
+    restart: on-failure
+
+    networks:
+      - paytrack-network
 
 
   # =========================================================
   # FRAUD SERVICE
-  # COMMENTED - RUN LOCALLY FROM IDE
   # =========================================================
 
-  # fraud-service:
-  #   build:
-  #     context: ./fraud-service
-  #
-  #   container_name: fraud-service
-  #
-  #   depends_on:
-  #     fraud-db:
-  #       condition: service_healthy
-  #
-  #     kafka:
-  #       condition: service_healthy
-  #
-  #     config-server:
-  #       condition: service_started
-  #
-  #     registry:
-  #       condition: service_started
-  #
-  #   ports:
-  #     - "8081:8081"
-  #
-  #   environment:
-  #     SERVER_PORT: 8081
-  #     SPRING_APPLICATION_NAME: fraud-service
-  #
-  #     SPRING_CONFIG_IMPORT: optional:configserver:http://config-server:8888
-  #
-  #     SPRING_DATASOURCE_URL: jdbc:postgresql://fraud-db:5432/frauddb
-  #     SPRING_DATASOURCE_USERNAME: postgres
-  #     SPRING_DATASOURCE_PASSWORD: postgres
-  #
-  #     SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-  #
-  #     EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://registry:8761/eureka/
-  #
-  #   restart: on-failure
+  fraud-service:
+    build:
+      context: ./fraud-service
+      dockerfile: Dockerfile
+
+    container_name: fraud-service
+
+    depends_on:
+      fraud-db:
+        condition: service_healthy
+
+      kafka:
+        condition: service_healthy
+
+      config-server:
+        condition: service_healthy
+
+      registry:
+        condition: service_healthy
+
+    ports:
+      - "8081:8081"
+
+    environment:
+      SERVER_PORT: 8081
+
+      SPRING_APPLICATION_NAME: fraud-service
+
+      SPRING_CONFIG_IMPORT: optional:configserver:http://config-server:8888
+
+      SPRING_DATASOURCE_URL: jdbc:postgresql://fraud-db:5432/frauddb
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://registry:8761/eureka/
+
+    restart: on-failure
+
+    networks:
+      - paytrack-network
 
 
   # =========================================================
   # API GATEWAY
-  # COMMENTED - RUN LOCALLY FROM IDE
   # =========================================================
 
-  # gateway:
-  #   build:
-  #     context: ./paytrack-gateway
-  #
-  #   container_name: paytrack-gateway
-  #
-  #   depends_on:
-  #     config-server:
-  #       condition: service_started
-  #
-  #     registry:
-  #       condition: service_started
-  #
-  #     payment-service:
-  #       condition: service_started
-  #
-  #     fraud-service:
-  #       condition: service_started
-  #
-  #   ports:
-  #     - "8085:8080"
-  #
-  #   environment:
-  #     SERVER_PORT: 8080
-  #     SPRING_APPLICATION_NAME: paytrack-gateway
-  #
-  #     SPRING_CONFIG_IMPORT: optional:configserver:http://config-server:8888
-  #
-  #     EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://registry:8761/eureka/
-  #
-  #   restart: on-failure
+  gateway:
+    build:
+      context: ./paytrack-gateway
+      dockerfile: Dockerfile
+
+    container_name: paytrack-gateway
+
+    depends_on:
+      config-server:
+        condition: service_healthy
+
+      registry:
+        condition: service_healthy
+
+      payment-service:
+        condition: service_started
+
+      fraud-service:
+        condition: service_started
+
+    ports:
+      - "8085:8080"
+
+    environment:
+      SERVER_PORT: 8080
+
+      SPRING_APPLICATION_NAME: paytrack-gateway
+
+      SPRING_CONFIG_IMPORT: optional:configserver:http://config-server:8888
+
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://registry:8761/eureka/
+
+    restart: on-failure
+
+    networks:
+      - paytrack-network
 
 
 # ===========================================================
@@ -314,5 +370,17 @@ services:
 # ===========================================================
 
 volumes:
+
   payment-db-data:
+
   fraud-db-data:
+
+
+# ===========================================================
+# NETWORK
+# ===========================================================
+
+networks:
+
+  paytrack-network:
+    driver: bridge
