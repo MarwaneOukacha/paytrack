@@ -54,40 +54,6 @@ public class Account {
         updatedAt = LocalDateTime.now();
     }
 
-    // ── Méthodes métier ──────────────────────────────────────────────────
-
-    /**
-     * Débite le compte source.
-     * Appelé dans @Transactional avant de publier sur Kafka.
-     */
-    public void debit(BigDecimal amount) {
-        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("Le montant doit être positif");
-        }
-        if (this.balance.compareTo(amount) < 0) {
-            throw new IllegalStateException("Solde insuffisant");
-        }
-        this.balance = this.balance.subtract(amount);
-    }
-
-    /**
-     * Crédite le compte destination.
-     * Appelé dans le TransferConsumer après réception du message Kafka.
-     */
-    public void credit(BigDecimal amount) {
-        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("Le montant doit être positif");
-        }
-        this.balance = this.balance.add(amount);
-    }
-
-    /**
-     * Vérifie si le compte peut émettre un paiement.
-     */
-    public boolean canTransfer(BigDecimal amount) {
-        return this.status == AccountStatus.ACTIVE
-                && this.balance.compareTo(amount) >= 0;
-    }
 
 
 }

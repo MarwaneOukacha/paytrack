@@ -4,23 +4,27 @@ import com.paytrack.paytrackpaymentservice.entity.Account;
 import com.paytrack.paytrackpaymentservice.entity.OutboxEvent;
 import com.paytrack.paytrackpaymentservice.entity.Payment;
 import com.paytrack.paytrackpaymentservice.mapper.PaymentEventMapper;
+import com.paytrack.paytrackpaymentservice.mapper.PaymentMapper;
 import com.paytrack.paytrackpaymentservice.mapper.TransferMapper;
 import com.paytrack.paytrackpaymentservice.repository.AccountRepository;
 import com.paytrack.paytrackpaymentservice.repository.OutboxEventRepository;
 import com.paytrack.paytrackpaymentservice.repository.PaymentRepository;
 import com.paytrack.paytrackpaymentservice.service.PaymentService;
-import com.paytrack.shared.dto.PaymentEvent;
-import com.paytrack.shared.dto.TransferRequest;
-import com.paytrack.shared.dto.TransferResponse;
+import com.paytrack.paytrackpaymentservice.specification.PaymentSpecification;
+import com.paytrack.shared.dto.*;
 import com.paytrack.shared.enums.AccountStatus;
 import com.paytrack.shared.enums.PaymentStatus;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -31,7 +35,7 @@ public class PaymentServiceImp implements PaymentService {
             LoggerFactory.getLogger(PaymentServiceImp.class);
 
     private static final String FAILED_TOPIC = "payment.failed";
-
+    private final PaymentMapper paymentMapper;
     private final PaymentEventMapper paymentEventMapper;
     private final TransferMapper transferMapper;
     private final AccountRepository accountRepository;
@@ -130,6 +134,30 @@ public class PaymentServiceImp implements PaymentService {
             throw exception;
 
         }
+    }
+
+    @Override
+    public Page<PaymentDto> getPayments(PaymentFilter filter, Pageable pageable) {
+
+        Specification<Payment> specification = Specification
+                .where(PaymentSpecification.hasAccountId(filter.getAccountId()))
+                .and(PaymentSpecification.hasToAccountNumber(
+                        filter.getToAccountNumber()))
+                .and(PaymentSpecification.hasStatus(
+                        filter.getStatus()))
+                .and(PaymentSpecification.amountGreaterThanOrEqualTo(
+                        filter.getMinAmount()))
+                .and(PaymentSpecification.amountLessThanOrEqualTo(
+                        filter.getMaxAmount()))
+                .and(PaymentSpecification.createdAfter(
+                        filter.getFromDate()))
+                .and(PaymentSpecification.createdBefore(
+                        filter.getToDate()));
+
+
+        return paymentRepository
+                .findAll(specification, pageable)
+                .map(paymentMapper::toDto);
     }
 
     private void publishFailedEvent(
