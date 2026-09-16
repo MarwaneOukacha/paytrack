@@ -10,12 +10,14 @@ import com.paytrack.paytrackpaymentservice.repository.AccountRepository;
 import com.paytrack.paytrackpaymentservice.repository.OutboxEventRepository;
 import com.paytrack.paytrackpaymentservice.repository.PaymentRepository;
 import com.paytrack.paytrackpaymentservice.service.PaymentService;
+import com.paytrack.paytrackpaymentservice.service.PaymentSseService;
 import com.paytrack.paytrackpaymentservice.specification.PaymentSpecification;
 import com.paytrack.shared.dto.*;
 import com.paytrack.shared.enums.AccountStatus;
 import com.paytrack.shared.enums.PaymentStatus;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import org.apache.kafka.common.errors.ResourceNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
@@ -24,8 +26,12 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -33,7 +39,7 @@ public class PaymentServiceImp implements PaymentService {
 
     private static final Logger log =
             LoggerFactory.getLogger(PaymentServiceImp.class);
-
+    private final PaymentSseService paymentSseService;
     private static final String FAILED_TOPIC = "payment.failed";
     private final PaymentMapper paymentMapper;
     private final PaymentEventMapper paymentEventMapper;
@@ -112,7 +118,10 @@ public class PaymentServiceImp implements PaymentService {
                     "payment.initiated",
                     String.valueOf(savedPayment.getId())
             );
+            PaymentDto paymentDto =
+                    paymentMapper.toDto(savedPayment);
 
+            paymentSseService.publishPayment(paymentDto);
             outboxEvent.setSent(false);
             outboxRepository.save(outboxEvent);
 
@@ -134,6 +143,93 @@ public class PaymentServiceImp implements PaymentService {
             throw exception;
 
         }
+    }
+
+    @Override
+    public PaymentStatsDto getPaymentStats() {
+
+        List<Payment> payments = paymentRepository.findAll();
+
+        PaymentStatsDto stats = new PaymentStatsDto();
+
+        stats.setTotalPayments(payments.size());
+
+        BigDecimal totalAmount = payments.stream()
+                .map(Payment::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        stats.setTotalAmount(totalAmount);
+
+        List<Payment> successful = payments.stream()
+                .filter(p -> p.getStatus() == PaymentStatus.PROCESSED)
+                .toList();
+
+        List<Payment> pending = payments.stream()
+                .filter(p -> p.getStatus() == PaymentStatus.PENDING)
+                .toList();
+
+        List<Payment> failed = payments.stream()
+                .filter(p -> p.getStatus() == PaymentStatus.FAILED)
+                .toList();
+
+        stats.setSuccessfulPayments(successful.size());
+
+        stats.setSuccessfulAmount(
+                successful.stream()
+                        .map(Payment::getAmount)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add)
+        );
+
+        stats.setPendingPayments(pending.size());
+
+        stats.setPendingAmount(
+                pending.stream()
+                        .map(Payment::getAmount)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add)
+        );
+
+        stats.setFailedPayments(failed.size());
+
+        stats.setFailedAmount(
+                failed.stream()
+                        .map(Payment::getAmount)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add)
+        );
+
+        if (!payments.isEmpty()) {
+            stats.setAverageAmount(
+                    totalAmount.divide(
+                            BigDecimal.valueOf(payments.size()),
+                            2,
+                            RoundingMode.HALF_UP
+                    )
+            );
+        } else {
+            stats.setAverageAmount(BigDecimal.ZERO);
+        }
+
+        Map<String, Long> paymentsByStatus = payments.stream()
+                .collect(Collectors.groupingBy(
+                        p -> p.getStatus().name(),
+                        Collectors.counting()
+                ));
+
+        stats.setPaymentsByStatus(paymentsByStatus);
+
+        return stats;
+    }
+
+    @Override
+    public PaymentDto getPaymentById(UUID id) {
+
+        Payment payment = paymentRepository.findById(id)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Payment not found with id: " + id
+                        )
+                );
+
+        return paymentMapper.toDto(payment);
     }
 
     @Override

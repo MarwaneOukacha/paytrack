@@ -2,17 +2,19 @@ package com.paytrack.paytrackpaymentservice.controller;
 
 
 import com.paytrack.paytrackpaymentservice.service.PaymentService;
-import com.paytrack.shared.dto.PaymentDto;
-import com.paytrack.shared.dto.PaymentFilter;
-import com.paytrack.shared.dto.TransferRequest;
-import com.paytrack.shared.dto.TransferResponse;
+import com.paytrack.paytrackpaymentservice.service.PaymentSseService;
+import com.paytrack.shared.dto.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/payments")
@@ -20,6 +22,7 @@ import org.springframework.web.bind.annotation.*;
 public class PaymentController {
 
     private final PaymentService paymentService;
+    private final PaymentSseService paymentSseService;
 
     @PostMapping("/transfer")
     public ResponseEntity<TransferResponse> initiateTransfer(
@@ -43,6 +46,30 @@ public class PaymentController {
                 paymentService.getPayments(filter, pageable);
 
         return ResponseEntity.ok(payments);
+    }
+    @GetMapping("/{id}")
+    public ResponseEntity<PaymentDto> getPaymentById(
+            @PathVariable String id) {
+
+        return ResponseEntity.ok(
+                paymentService.getPaymentById(UUID.fromString(id))
+        );
+    }
+    @GetMapping("/stats")
+    public ResponseEntity<PaymentStatsDto> getPaymentStats() {
+
+        return ResponseEntity.ok(
+                paymentService.getPaymentStats()
+        );
+    }
+
+    @GetMapping(
+            value = "/stream",
+            produces = MediaType.TEXT_EVENT_STREAM_VALUE
+    )
+    public SseEmitter streamPayments() {
+
+        return paymentSseService.subscribe();
     }
 
 }
