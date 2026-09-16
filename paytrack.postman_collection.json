@@ -1,0 +1,778 @@
+{
+  "info": {
+    "name": "PayTrack API",
+    "description": "PayTrack microservices test collection.\n\nArchitecture:\n- paytrack-gateway: Spring Cloud Gateway (http://localhost:8085) — routes ONLY /api/payments/**\n- payment-service: REST API (host 8082 in Docker) — /api/payments/** and /api/accounts/**\n- fraud-service: Kafka-driven, NO REST API\n- paytrack-registry: Eureka (http://localhost:8761)\n- paytrack-config: Config Server (http://localhost:8888)\n- kafka-ui: Kafka UI (http://localhost:8090)\n\nRouting note: the gateway currently declares a single route for /api/payments/** (paytrack-gateway/application.yaml). Account and stats endpoints under /api/accounts/** must be called DIRECTLY on payment-service ({{paymentServiceUrl}}).\n\nWorkflow hint: accounts start with balance 0 — to test transfers successfully, UPDATE the balance in the paymentdb accounts table (e.g. `UPDATE accounts SET balance = 1000 WHERE account_number = '<ACC-...>';`), otherwise every transfer fails with 'Insufficient balance'.\n\nSetup: `docker compose up --build`, then import this collection and the 'PayTrack Local' environment.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "transferId",
+      "value": ""
+    },
+    {
+      "key": "accountNumber",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Payment Service",
+      "description": "REST API exposed by payment-service. Transfer + list/get/stats/SSE endpoints under /api/payments/** go through the API Gateway; everything is also reachable directly on payment-service (port 8082).",
+      "item": [
+        {
+          "name": "Transfer",
+          "item": [
+            {
+              "name": "Transfer - Happy Path (via Gateway)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/payments/transfer",
+                  "host": ["{{gatewayUrl}}"],
+                  "path": ["api", "payments", "transfer"]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"fromAccountNumber\": \"ACC-00123\",\n    \"toAccountNumber\": \"ACC-00456\",\n    \"amount\": 150.00,\n    \"description\": \"Rent payment March\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Initiates a transfer. Returns a PENDING TransferResponse (UUID transferId) and stores the transferId in a collection variable for use by GET /api/payments/{id}."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status is 200\", function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "",
+                      "const json = pm.response.json();",
+                      "",
+                      "pm.test(\"TransferResponse body shape\", function () {",
+                      "    pm.expect(json).to.have.property('transferId');",
+                      "    pm.expect(json.status).to.eql('PENDING');",
+                      "    pm.expect(json.currency).to.eql('MAD');",
+                      "    pm.response.to.have.jsonBody('toAccountNumber');",
+                      "});",
+                      "",
+                      "if (json.transferId) {",
+                      "    pm.collectionVariables.set('transferId', json.transferId);",
+                      "    pm.collectionVariables.set('fromAccountNumber', json.fromAccountNumber);",
+                      "    pm.collectionVariables.set('toAccountNumber', json.toAccountNumber);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Transfer - Direct to payment-service",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{paymentServiceUrl}}/api/payments/transfer",
+                  "host": ["{{paymentServiceUrl}}"],
+                  "path": ["api", "payments", "transfer"]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"fromAccountNumber\": \"ACC-00123\",\n    \"toAccountNumber\": \"ACC-00456\",\n    \"amount\": 99.99,\n    \"description\": \"Direct call smoke test\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Same endpoint hit directly against payment-service (bypasses the gateway). Host port 8082 per docker-compose."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status is 200\", function () {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "pm.test(\"Response is PENDING\", function () {",
+                      "    pm.expect(pm.response.json().status).to.eql('PENDING');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Transfer - Same source and destination",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/payments/transfer",
+                  "host": ["{{gatewayUrl}}"],
+                  "path": ["api", "payments", "transfer"]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"fromAccountNumber\": \"ACC-00123\",\n    \"toAccountNumber\": \"ACC-00123\",\n    \"amount\": 50.00\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 400 (BAD_REQUEST): 'The source and destination accounts must be different.'"
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"Status is 400\", function () {",
+                      "    pm.response.to.have.status(400);",
+                      "});",
+                      "pm.test(\"Message mentions accounts must be different\", function () {",
+                      "    pm.expect(pm.response.json().message).to.include('different');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Transfer - Source account not found",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/payments/transfer",
+                  "host": ["{{gatewayUrl}}"],
+                  "path": ["api", "payments", "transfer"]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"fromAccountNumber\": \"ACC-99999\",\n    \"toAccountNumber\": \"ACC-00456\",\n    \"amount\": 50.00\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 400: 'Source account not found: ACC-99999'. A `payment.failed` Kafka event is also sent."
+              }
+            },
+            {
+              "name": "Transfer - Destination account not found",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/payments/transfer",
+                  "host": ["{{gatewayUrl}}"],
+                  "path": ["api", "payments", "transfer"]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"fromAccountNumber\": \"ACC-00123\",\n    \"toAccountNumber\": \"ACC-99999\",\n    \"amount\": 50.00\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 400: 'Destination account not found: ACC-99999'."
+              }
+            },
+            {
+              "name": "Transfer - Insufficient balance",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/payments/transfer",
+                  "host": ["{{gatewayUrl}}"],
+                  "path": ["api", "payments", "transfer"]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"fromAccountNumber\": \"ACC-00123\",\n    \"toAccountNumber\": \"ACC-00456\",\n    \"amount\": 999999.00\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Expected 400: 'Insufficient balance or source account is inactive.' Accounts are created with balance 0, so raise the source account balance in the DB first (see collection description)."
+              }
+            },
+            {
+              "name": "Transfer - Missing fromAccountNumber",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/payments/transfer",
+                  "host": ["{{gatewayUrl}}"],
+                  "path": ["api", "payments", "transfer"]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"toAccountNumber\": \"ACC-00456\",\n    \"amount\": 50.00\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Bean validation: `@NotBlank` on fromAccountNumber -> 'The source account is required'."
+              }
+            },
+            {
+              "name": "Transfer - Amount too high (> 10,000 MAD)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/payments/transfer",
+                  "host": ["{{gatewayUrl}}"],
+                  "path": ["api", "payments", "transfer"]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"fromAccountNumber\": \"ACC-00123\",\n    \"toAccountNumber\": \"ACC-00456\",\n    \"amount\": 10000.01\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Bean validation: `@DecimalMax(10000.00)` -> 'The amount cannot exceed 10,000 MAD'."
+              }
+            },
+            {
+              "name": "Transfer - Zero amount",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/payments/transfer",
+                  "host": ["{{gatewayUrl}}"],
+                  "path": ["api", "payments", "transfer"]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"fromAccountNumber\": \"ACC-00123\",\n    \"toAccountNumber\": \"ACC-00456\",\n    \"amount\": 0\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Bean validation: `@DecimalMin(0.01)` -> 'The amount must be greater than 0'."
+              }
+            }
+          ]
+        },
+        {
+          "name": "Payments - List with filters",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{gatewayUrl}}/api/payments?page=0&size=20&sort=createdAt,desc&status=&accountId=&toAccountNumber=&minAmount=&maxAmount=&fromDate=&toDate=",
+              "host": ["{{gatewayUrl}}"],
+              "path": ["api", "payments"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                },
+                {
+                  "key": "sort",
+                  "value": "createdAt,desc"
+                },
+                {
+                  "key": "status",
+                  "value": "PENDING",
+                  "description": "Optional. One of: PENDING, PROCESSED, FAILED, FRAUD, REJECTED, COMPLETED, DLT"
+                },
+                {
+                  "key": "accountId",
+                  "value": "",
+                  "description": "Optional. Source account number"
+                },
+                {
+                  "key": "toAccountNumber",
+                  "value": "",
+                  "description": "Optional. Destination account number"
+                },
+                {
+                  "key": "minAmount",
+                  "value": "",
+                  "description": "Optional. Minimum amount"
+                },
+                {
+                  "key": "maxAmount",
+                  "value": "",
+                  "description": "Optional. Maximum amount"
+                },
+                {
+                  "key": "fromDate",
+                  "value": "",
+                  "description": "Optional. ISO LocalDateTime, e.g. 2026-09-01T00:00:00"
+                },
+                {
+                  "key": "toDate",
+                  "value": "",
+                  "description": "Optional. ISO LocalDateTime"
+                }
+              ]
+            },
+            "description": "Paginated payment list (Pageable default size=20, sort=createdAt,desc). All filter fields optional (PaymentFilter)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Returns a Page\", function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('content');",
+                  "    pm.expect(json).to.have.property('totalElements');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Payment by ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{gatewayUrl}}/api/payments/{{transferId}}",
+              "host": ["{{gatewayUrl}}"],
+              "path": ["api", "payments", "{{transferId}}"]
+            },
+            "description": "Fetch a single payment by UUID. The {{transferId}} variable is set automatically by 'Transfer - Happy Path (via Gateway)'. Expected: PaymentDto with status, amount, accountId, createdAt."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Has id and status\", function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('id');",
+                  "    pm.expect(json).to.have.property('status');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Payment Stats",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{gatewayUrl}}/api/payments/stats",
+              "host": ["{{gatewayUrl}}"],
+              "path": ["api", "payments", "stats"]
+            },
+            "description": "Aggregated stats: totalPayments, totalAmount, successful/pending/failed counts and amounts, averageAmount, paymentsByStatus map."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Has stats fields\", function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('totalPayments');",
+                  "    pm.expect(json).to.have.property('totalAmount');",
+                  "    pm.expect(json).to.have.property('paymentsByStatus');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "SSE - Subscribe to payment stream",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/payments/stream",
+              "host": ["{{gatewayUrl}}"],
+              "path": ["api", "payments", "stream"]
+            },
+            "description": "Server-Sent Events stream. Sends a `connected` event immediately, then a `payment` event each time a payment is processed. Timeout is 30 minutes. Note: in the Postman UI the connection stays open — use the console to view events, or open this URL in a browser (server sent events via GET).",
+            "protocolProfileBehavior": {
+              "disableBodyPruning": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Accounts",
+      "description": "Account management under /api/accounts/**. NOT routed by the gateway (only /api/payments/** is), so call payment-service directly on {{paymentServiceUrl}}. Account numbers are auto-generated (ACC-########). New accounts start with balance = 0.",
+      "item": [
+        {
+          "name": "Create Account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentServiceUrl}}/api/accounts",
+              "host": ["{{paymentServiceUrl}}"],
+              "path": ["api", "accounts"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"ownerName\": \"Yassine El Idrissi\",\n    \"ownerEmail\": \"yassine@example.com\",\n    \"currency\": \"MAD\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Creates an account. Expected 201 CREATED with AccountDto (auto-generated accountNumber, balance=0, status=ACTIVE). Stores accountNumber to the {{accountNumber}} variable."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 201\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "const json = pm.response.json();",
+                  "",
+                  "pm.test(\"AccountDto shape\", function () {",
+                  "    pm.expect(json).to.have.property('accountNumber');",
+                  "    pm.expect(json.balance).to.eql(0);",
+                  "    pm.expect(json.status).to.eql('ACTIVE');",
+                  "    pm.expect(json.currency).to.eql('MAD');",
+                  "});",
+                  "",
+                  "if (json.accountNumber) {",
+                  "    pm.collectionVariables.set('accountNumber', json.accountNumber);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Account - Duplicate email",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentServiceUrl}}/api/accounts",
+              "host": ["{{paymentServiceUrl}}"],
+              "path": ["api", "accounts"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"ownerName\": \"Yassine El Idrissi\",\n    \"ownerEmail\": \"yassine@example.com\",\n    \"currency\": \"MAD\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Expected 400: 'An account already exists with this email'. Run 'Create Account' first, or adapt the email."
+          }
+        },
+        {
+          "name": "Create Account - Invalid email",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{paymentServiceUrl}}/api/accounts",
+              "host": ["{{paymentServiceUrl}}"],
+              "path": ["api", "accounts"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"ownerName\": \"John Doe\",\n    \"ownerEmail\": \"not-an-email\",\n    \"currency\": \"MAD\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Bean validation: `@Email` on ownerEmail and `@Size(min=3,max=3)` on currency."
+          }
+        },
+        {
+          "name": "List Accounts",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{paymentServiceUrl}}/api/accounts?page=0&size=20&sort=createdAt,desc",
+              "host": ["{{paymentServiceUrl}}"],
+              "path": ["api", "accounts"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                },
+                {
+                  "key": "sort",
+                  "value": "createdAt,desc"
+                }
+              ]
+            },
+            "description": "Paginated list of accounts (Pageable, default size=20, sort=createdAt,desc)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Returns a Page\", function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('content');",
+                  "    pm.expect(json).to.have.property('totalElements');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Fraud Service",
+      "description": "fraud-service exposes NO REST endpoints. It consumes `payment.initiated` (via fraud.fraud-check flow), evaluates the transaction (FraudDecision APPROVED/REJECTED), and publishes the result back for payment-service to finalize. Use kafka-ui (http://localhost:8090) to inspect topics: payment.initiated, payment.processed, payment.failed, payment.DLT, payment.fraud, fraud.fraud-check, fraud.fraud-evaluated."
+    },
+    {
+      "name": "Infrastructure",
+      "description": "Supporting services used to verify the platform is up.",
+      "item": [
+        {
+          "name": "Eureka - Registry home",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{registryUrl}}/",
+              "host": ["{{registryUrl}}"],
+              "path": [""]
+            },
+            "description": "Eureka dashboard HTML. Shows registered instances of payment-service, fraud-service, paytrack-gateway."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Eureka - Registered applications (JSON)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{registryUrl}}/eureka/apps",
+              "host": ["{{registryUrl}}"],
+              "path": ["eureka", "apps"]
+            },
+            "description": "Returns JSON of all registered services. `applications.application` should include PAYMENT-SERVICE, FRAUD-SERVICE, PAYTRACK-GATEWAY."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Has applications\", function () {",
+                  "    pm.expect(pm.response.json()).to.have.property('applications');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Eureka - Payment Service instance",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{registryUrl}}/eureka/apps/payment-service",
+              "host": ["{{registryUrl}}"],
+              "path": ["eureka", "apps", "payment-service"]
+            },
+            "description": "Instance details for payment-service (host, port, status)."
+          }
+        },
+        {
+          "name": "Config Server - payment-service config",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{configUrl}}/payment-service/default",
+              "host": ["{{configUrl}}"],
+              "path": ["payment-service", "default"]
+            },
+            "description": "Configuration served for payment-service (datasource, kafka, eureka)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Contains propertySources\", function () {",
+                  "    pm.expect(pm.response.json()).to.have.property('propertySources');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Config Server - fraud-service config",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{configUrl}}/fraud-service/default",
+              "host": ["{{configUrl}}"],
+              "path": ["fraud-service", "default"]
+            },
+            "description": "Configuration served for fraud-service."
+          }
+        },
+        {
+          "name": "Kafka UI - Overview",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{kafkaUiUrl}}/",
+              "host": ["{{kafkaUiUrl}}"],
+              "path": [""]
+            },
+            "description": "Kafka UI dashboard (provectuslabs/kafka-ui). Inspect topics, consumers (payment-group, fraud-group), and messages."
+          }
+        }
+      ]
+    }
+  ]
+}
