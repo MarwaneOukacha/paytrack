@@ -25,6 +25,11 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> , JpaSpe
 
     List<Payment> findByAccountIdAndCreatedAtAfter(String accountId, LocalDateTime after);
 
+    @Query("SELECT p FROM Payment p WHERE p.accountId = :accountNumber OR p.toAccountNumber = :accountNumber")
+    Page<Payment> findByAccountNumberInvolved(
+            @Param("accountNumber") String accountNumber,
+            Pageable pageable);
+
     @Query("SELECT p FROM Payment p WHERE p.createdAt >= :start AND p.createdAt < :end")
     List<Payment> findAllBetween(
             @Param("start") LocalDateTime start,

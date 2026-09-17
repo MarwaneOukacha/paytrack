@@ -1,5 +1,6 @@
 package com.paytrack.paytrackpaymentservice.service.impl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paytrack.paytrackpaymentservice.service.PaymentSseService;
 import com.paytrack.shared.dto.PaymentDto;
 import lombok.extern.slf4j.Slf4j;
@@ -13,7 +14,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @Service
 @Slf4j
 public class PaymentSseServiceImpl implements PaymentSseService {
-
+    private final ObjectMapper objectMapper=new ObjectMapper();
     private final List<SseEmitter> emitters =
             new CopyOnWriteArrayList<>();
 
@@ -48,32 +49,27 @@ public class PaymentSseServiceImpl implements PaymentSseService {
         return emitter;
     }
 
-    @Override
     public void publishPayment(PaymentDto payment) {
-
-        List<SseEmitter> deadEmitters = new CopyOnWriteArrayList<>();
 
         for (SseEmitter emitter : emitters) {
 
             try {
 
+                String json = objectMapper.writeValueAsString(payment);
+
                 emitter.send(
                         SseEmitter.event()
                                 .name("payment")
-                                .data(payment)
+                                .data(json)
                 );
 
-            } catch (IOException e) {
+            } catch (Exception e) {
 
-                deadEmitters.add(emitter);
+                emitter.completeWithError(e);
+                emitters.remove(emitter);
+
+                log.error("Error sending payment through SSE", e);
             }
         }
-
-        emitters.removeAll(deadEmitters);
-
-        log.info(
-                "Payment pushed to {} SSE clients",
-                emitters.size()
-        );
     }
 }

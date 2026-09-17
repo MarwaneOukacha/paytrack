@@ -101,6 +101,9 @@ public class PaymentServiceImp implements PaymentService {
 
             savedPayment = paymentRepository.save(payment);
 
+            source.debit(request.getAmount());
+            destination.credit(request.getAmount());
+
             // 6. Build PaymentEvent
             PaymentEvent paymentEvent = new PaymentEvent();
 
@@ -140,6 +143,10 @@ public class PaymentServiceImp implements PaymentService {
 
             // Publish FAILED event
             //TODO:: YOU SHOULD SAVE THE PAYMENT IN CASE OF REJECTED
+            Payment payment = transferMapper.toDebitPayment(request);
+            payment.setStatus(PaymentStatus.FAILED);
+
+            savedPayment = paymentRepository.save(payment);
             publishFailedEvent(request, savedPayment, exception);
             throw exception;
 

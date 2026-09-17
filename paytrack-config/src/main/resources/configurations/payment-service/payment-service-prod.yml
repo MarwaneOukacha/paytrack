@@ -35,3 +35,14 @@ eureka:
   instance:
     hostname: payment-service
     prefer-ip-address: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,loggers,env
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
