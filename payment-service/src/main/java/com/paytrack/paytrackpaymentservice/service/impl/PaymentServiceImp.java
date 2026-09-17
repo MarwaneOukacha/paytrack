@@ -139,6 +139,7 @@ public class PaymentServiceImp implements PaymentService {
         } catch (RuntimeException exception) {
 
             // Publish FAILED event
+            //TODO:: YOU SHOULD SAVE THE PAYMENT IN CASE OF REJECTED
             publishFailedEvent(request, savedPayment, exception);
             throw exception;
 
