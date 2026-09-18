@@ -174,9 +174,10 @@ public class AccountServiceImpl implements AccountService {
 
         switch (targetStatus) {
             case ACTIVE -> {
-                if (account.getStatus() != AccountStatus.INACTIVE) {
+                if (account.getStatus() != AccountStatus.INACTIVE
+                        && account.getStatus() != AccountStatus.BLOCKED) {
                     throw new IllegalStateException(
-                            "Only an inactive account can be activated"
+                            "Only an inactive or blocked account can be activated"
                     );
                 }
             }
