@@ -101,41 +101,24 @@ public class PaymentServiceImp implements PaymentService {
 
             savedPayment = paymentRepository.save(payment);
 
-            source.debit(request.getAmount());
-            destination.credit(request.getAmount());
-
             // 6. Build PaymentEvent
             PaymentEvent paymentEvent = new PaymentEvent();
 
             paymentEvent.setPaymentId(savedPayment.getId());
             paymentEvent.setAccountId(request.getFromAccountNumber());
-            paymentEvent.setAccountId(request.getToAccountNumber());
+            paymentEvent.setToAccountNumber(request.getToAccountNumber());
             paymentEvent.setAmount(request.getAmount());
             //paymentEvent.setCurrency(source.getCurrency());
             paymentEvent.setStatus(PaymentStatus.PENDING);
             paymentEvent.setDescription(request.getDescription());
+            kafkaTemplate.send("fraud.fraud-check", String.valueOf(paymentEvent.getPaymentId()), paymentEvent);
+            log.info("Payment forwarded to fraud-check — paymentId={}", paymentEvent.getPaymentId());
 
-            // 7. Save outbox event
-            OutboxEvent outboxEvent = paymentEventMapper.toOutboxEvent(
-                    paymentEvent,
-                    "payment.initiated",
-                    String.valueOf(savedPayment.getId())
-            );
             PaymentDto paymentDto =
                     paymentMapper.toDto(savedPayment);
 
             paymentSseService.publishPayment(paymentDto);
-            outboxEvent.setSent(false);
-            outboxRepository.save(outboxEvent);
 
-            log.info(
-                    "Transfer initiated — paymentId={} | {} → {} | {} {}",
-                    savedPayment.getId(),
-                    source.getAccountNumber(),
-                    destination.getAccountNumber(),
-                    request.getAmount(),
-                    source.getCurrency()
-            );
 
             return transferMapper.toResponse(savedPayment, source);
 

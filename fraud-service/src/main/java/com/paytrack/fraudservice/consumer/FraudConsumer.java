@@ -6,6 +6,8 @@ import com.paytrack.fraudservice.producer.FraudProducer;
 import com.paytrack.fraudservice.service.FraudService;
 import com.paytrack.shared.dto.FraudEvent;
 import com.paytrack.shared.dto.PaymentEvent;
+import com.paytrack.shared.enums.FraudDecision;
+import com.paytrack.shared.enums.PaymentStatus;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -34,6 +36,12 @@ public class FraudConsumer {
 
         FraudEvaluation evaluation = fraudService.evaluate(event);
         FraudEvent fraudEvent = fraudMapper.toFraudEvent(evaluation, event);
-        fraudProducer.publish(fraudEvent);
+        if(evaluation.getDecision().equals(FraudDecision.APPROVED)){
+            event.setStatus(PaymentStatus.PROCESSED);
+        }else {
+            event.setStatus(PaymentStatus.REJECTED);
+            event.setDescription(evaluation.getReason());
+        }
+        fraudProducer.publish(fraudEvent,event);
     }
 }

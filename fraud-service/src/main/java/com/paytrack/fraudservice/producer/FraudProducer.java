@@ -1,6 +1,7 @@
 package com.paytrack.fraudservice.producer;
 
 import com.paytrack.shared.dto.FraudEvent;
+import com.paytrack.shared.dto.PaymentEvent;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,16 +12,17 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class FraudProducer {
 
-    private final KafkaTemplate<String, FraudEvent> kafkaTemplate;
+    private final KafkaTemplate<String, PaymentEvent> kafkaTemplate;
     private static final Logger log = LoggerFactory.getLogger(FraudProducer.class);
 
-    public void publish(FraudEvent event) {
+    public void publish(FraudEvent event, PaymentEvent paymentEvent) {
+
         kafkaTemplate.send(
-                "fraud.fraud-evaluated",
+                "payment.initiated",
                 String.valueOf(event.getPaymentId()),
-                event
+                paymentEvent
         );
-        log.info("Fraud result published — paymentId={} decision={}", 
+        log.info("Fraud result published — paymentId={} decision={}",
                 event.getPaymentId(), event.getDecision());
     }
 }

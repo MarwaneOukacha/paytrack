@@ -32,6 +32,14 @@ public class PaymentConsumer {
     )
     public void validate(PaymentEvent event,@Header(KafkaHeaders.RECEIVED_PARTITION) int partition){
         log.info("Received payment event from partition={}", partition);
+        Payment payment=paymentRepository.findById(event.getPaymentId()).orElseThrow(() -> new IllegalArgumentException(
+                "Payment not found: " + event.getPaymentId()
+        ));
+        if(event.getStatus().equals(PaymentStatus.REJECTED)){
+            payment.setStatus(PaymentStatus.REJECTED);
+            paymentRepository.save(payment);
+            return;
+        }
         // 2. Retrieve source account
         Account source = accountRepository
                 .findByAccountNumber(event.getAccountId())
@@ -41,26 +49,21 @@ public class PaymentConsumer {
 
         // 3. Retrieve destination account
         Account destination = accountRepository
-                .findByAccountNumber(event.getAccountId())
+                .findByAccountNumber(event.getToAccountNumber())
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Destination account not found: " + event.getAccountId()
                 ));
+        source.debit(event.getAmount());
+        destination.credit(event.getAmount());
 
-        source.setBalance(source.getBalance().subtract(event.getAmount()));
-        destination.setBalance(destination.getBalance().add(event.getAmount()));
         // Save the updated accounts
         accountRepository.save(source);
         accountRepository.save(destination);
 
-        Payment payment=paymentRepository.findById(event.getPaymentId()).orElseThrow(() -> new IllegalArgumentException(
-                "Payment not found: " + event.getPaymentId()
-        ));
-        payment.setStatus(PaymentStatus.PROCESSED);
+
+        payment.setStatus(PaymentStatus.COMPLETED);
         paymentRepository.save(payment);
-        // Forward to fraud service for analysis
-        event.setStatus(PaymentStatus.PROCESSED);
-        kafkaTemplate.send("fraud.fraud-check", String.valueOf(event.getPaymentId()), event);
-        log.info("Payment forwarded to fraud-check — paymentId={}", event.getPaymentId());
+
     }
 
 
@@ -93,7 +96,7 @@ public class PaymentConsumer {
                     );
                 });
     }
-    @KafkaListener(topics = "payment.fraud-check", groupId = "payment-group")
+    /*@KafkaListener(topics = "payment.fraud-check", groupId = "payment-group")
     @Transactional
     public void handleFraudResult(FraudEvent event,
                                   @Header(KafkaHeaders.RECEIVED_PARTITION) int partition) {
@@ -128,5 +131,5 @@ public class PaymentConsumer {
         }
 
         paymentRepository.save(payment);
-    }
+    }*/
 }
