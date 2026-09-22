@@ -163,6 +163,9 @@ services:
     ports:
       - "8888:8888"
 
+    volumes:
+      - ./logs:/app/logs
+
     environment:
       SERVER_PORT: 8888
       SPRING_APPLICATION_NAME: paytrack-config
@@ -201,6 +204,9 @@ services:
 
     ports:
       - "8761:8761"
+
+    volumes:
+      - ./logs:/app/logs
 
     environment:
       SERVER_PORT: 8761
@@ -254,6 +260,9 @@ services:
     ports:
       - "8082:8080"
 
+    volumes:
+      - ./logs:/app/logs
+
     environment:
       SERVER_PORT: 8080
 
@@ -302,6 +311,9 @@ services:
     ports:
       - "8081:8081"
 
+    volumes:
+      - ./logs:/app/logs
+
     environment:
       SERVER_PORT: 8081
 
@@ -349,6 +361,9 @@ services:
 
     ports:
       - "8085:8080"
+
+    volumes:
+      - ./logs:/app/logs
 
     environment:
       SERVER_PORT: 8080

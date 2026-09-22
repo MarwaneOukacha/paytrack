@@ -1,0 +1,93 @@
+# ============================================================
+# Deploy to AWS EC2
+# ------------------------------------------------------------
+# What this does:
+#   Every time you push to the 'main' branch (or click the
+#   "Run workflow" button in the Actions tab), GitHub Actions
+#   will SSH into your EC2 server, pull the latest code,
+#   build the JARs with Maven, and run Docker Compose.
+#
+# Required GitHub Secrets (repo -> Settings -> Secrets):
+#   EC2_HOST      = your server's Public IPv4 address
+#   EC2_USERNAME  = ubuntu
+#   EC2_SSH_KEY   = full contents of paytrack-key.pem
+# ============================================================
+
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ------------------------------------------------------
+      # Step 1: Connect to the EC2 server with SSH and do the
+      # whole deploy in one remote script.
+      # appleboy/ssh-action opens an SSH connection using the
+      # secrets you stored in GitHub. The 'script' field runs
+      # on the server itself (not on GitHub's machine).
+      # ------------------------------------------------------
+      - name: Pull, build, and start the stack on EC2
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            # --------------------------------------------------
+            # 1. Make sure the project folder exists.
+            #    On the very first deploy the folder does not
+            #    exist yet, so clone it. On later deploys the
+            #    [ -d ... ] check is false and we skip the clone.
+            #    (If your repo is private, you must add a GitHub
+            #    PAT to this URL: https://<user>:<PAT>@github.com/...)
+            # --------------------------------------------------
+            if [ ! -d "$HOME/paytrack" ]; then
+              cd "$HOME"
+              git clone https://github.com/MarwaneOukacha/paytrack.git
+            fi
+
+            cd "$HOME/paytrack"
+
+            # --------------------------------------------------
+            # 2. Get the latest code and force the working tree
+            #    back to exactly what is in 'main'. The 'reset
+            #    --hard' cleans up any leftover local changes or
+            #    freshly built JARs so 'git pull' never fails.
+            # --------------------------------------------------
+            git fetch origin
+            git reset --hard origin/main
+
+            # --------------------------------------------------
+            # 3. Build all the JARs. This runs the root Maven
+            #    aggregator which builds all 6 modules in order
+            #    (shared -> config -> registry -> gateway ->
+            #    payment -> fraud). -DskipTests makes the deploy
+            #    faster; tests can be run separately.
+            # --------------------------------------------------
+            mvn -q clean package -DskipTests
+
+            # --------------------------------------------------
+            # 4. Start everything. Docker Compose uses the Docker
+            #    files in each module and the ports/volumes from
+            #    docker-compose.yml. -d runs it detached (in the
+            #    background) so the SSH session does not hang.
+            #    --build forces a rebuild of images that changed.
+            # --------------------------------------------------
+            docker compose up -d --build
+
+            # --------------------------------------------------
+            # 5. Show the status so the deploy log is useful:
+            #    the -q flag above hides Maven output, so this
+            #    prints the final state of every container.
+            # --------------------------------------------------
+            docker compose ps
