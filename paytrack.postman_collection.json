@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "PayTrack API",
-    "description": "PayTrack microservices test collection.\n\nArchitecture:\n- paytrack-gateway: Spring Cloud Gateway (http://localhost:8085) — routes ONLY /api/payments/**\n- payment-service: REST API (host 8082 in Docker) — /api/payments/** and /api/accounts/**\n- fraud-service: Kafka-driven, NO REST API\n- paytrack-registry: Eureka (http://localhost:8761)\n- paytrack-config: Config Server (http://localhost:8888)\n- kafka-ui: Kafka UI (http://localhost:8090)\n\nRouting note: the gateway currently declares a single route for /api/payments/** (paytrack-gateway/application.yaml). Account and stats endpoints under /api/accounts/** must be called DIRECTLY on payment-service ({{paymentServiceUrl}}).\n\nWorkflow hint: accounts start with balance 0 — to test transfers successfully, UPDATE the balance in the paymentdb accounts table (e.g. `UPDATE accounts SET balance = 1000 WHERE account_number = '<ACC-...>';`), otherwise every transfer fails with 'Insufficient balance'.\n\nSetup: `docker compose up --build`, then import this collection and the 'PayTrack Local' environment.\n\nActuator: payment-service now exposes /actuator/health|info|metrics|loggers|env (management config in paytrack-config/configurations). Rebuild the images after the pom change: docker compose up --build.",
+    "description": "PayTrack microservices test collection.\n\nArchitecture:\n- paytrack-gateway: Spring Cloud Gateway (http://localhost:8085) — routes /api/payments/** and /api/accounts/** (→ payment-service) and /api/fraud/** (→ fraud-service)\n- payment-service: REST API (host 8082 in Docker) — /api/payments/** and /api/accounts/** + Kafka producer/consumer\n- fraud-service: REST API (host 8081 in Docker) — /api/fraud/** with evaluations, stats and fraud configuration CRUD. The detection engine (FraudConsumer → FraudService.evaluate) reads the fraud_configs table on every Kafka event, so config changes apply immediately.\n- paytrack-registry: Eureka (http://localhost:8761)\n- paytrack-config: Config Server (http://localhost:8888)\n- kafka-ui: Kafka UI (http://localhost:8090)\n\nDefault fraud rules (seeded into the fraud_configs table on fraud-service startup):\n- HIGH_AMOUNT: reject transfers above 10,000 MAD\n- REJECTION_RATE: reject after 3 rejected payments within 60 minutes\n- VELOCITY: reject after 10 payments within 60 minutes\n\nRouting note: all /api/** routes are served through the gateway ({{gatewayUrl}}). Each service is also reachable directly ({{paymentServiceUrl}} / {{fraudServiceUrl}}).\n\nWorkflow hint: accounts start with balance 0 — to test transfers successfully, deposit first (POST /api/accounts/{id}/deposit) or UPDATE the balance in the paymentdb accounts table (e.g. `UPDATE accounts SET balance = 1000 WHERE account_number = '<ACC-...>';`), otherwise every transfer fails with 'Insufficient balance'.\n\nSetup: `docker compose up --build`, then import this collection and the 'PayTrack Local' environment.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -16,12 +16,16 @@
     {
       "key": "accountId",
       "value": ""
+    },
+    {
+      "key": "fraudConfigId",
+      "value": ""
     }
   ],
   "item": [
     {
       "name": "Payment Service",
-      "description": "REST API exposed by payment-service. Transfer + list/get/stats/SSE endpoints under /api/payments/** go through the API Gateway; everything is also reachable directly on payment-service (port 8082).",
+      "description": "REST API exposed by payment-service under /api/payments/** and /api/accounts/**. Transfer + list/get/stats/SSE endpoints go through the API Gateway; everything is also reachable directly on payment-service (port 8082).",
       "item": [
         {
           "name": "Transfer",
@@ -56,36 +60,36 @@
                     }
                   }
                 },
-                "description": "Initiates a transfer. Returns a PENDING TransferResponse (UUID transferId) and stores the transferId in a collection variable for use by GET /api/payments/{id}."
-              },
-              "event": [
-                {
-                  "listen": "test",
-                  "script": {
-                    "type": "text/javascript",
-                    "exec": [
-                      "pm.test(\"Status is 200\", function () {",
-                      "    pm.response.to.have.status(200);",
-                      "});",
-                      "",
-                      "const json = pm.response.json();",
-                      "",
-                      "pm.test(\"TransferResponse body shape\", function () {",
-                      "    pm.expect(json).to.have.property('transferId');",
-                      "    pm.expect(json.status).to.eql('PENDING');",
-                      "    pm.expect(json.currency).to.eql('MAD');",
-                      "    pm.response.to.have.jsonBody('toAccountNumber');",
-                      "});",
-                      "",
-                      "if (json.transferId) {",
-                      "    pm.collectionVariables.set('transferId', json.transferId);",
-                      "    pm.collectionVariables.set('fromAccountNumber', json.fromAccountNumber);",
-                      "    pm.collectionVariables.set('toAccountNumber', json.toAccountNumber);",
-                      "}"
-                    ]
+                "description": "Initiates a transfer. Returns a PENDING TransferResponse (UUID transferId) and stores the transferId in a collection variable for use by GET /api/payments/{id}. The payment then goes through fraud-service via Kafka (fraud.fraud-check → payment.initiated).",
+                "event": [
+                  {
+                    "listen": "test",
+                    "script": {
+                      "type": "text/javascript",
+                      "exec": [
+                        "pm.test(\"Status is 200\", function () {",
+                        "    pm.response.to.have.status(200);",
+                        "});",
+                        "",
+                        "const json = pm.response.json();",
+                        "",
+                        "pm.test(\"TransferResponse body shape\", function () {",
+                        "    pm.expect(json).to.have.property('transferId');",
+                        "    pm.expect(json.status).to.eql('PENDING');",
+                        "    pm.expect(json.currency).to.eql('MAD');",
+                        "    pm.response.to.have.jsonBody('toAccountNumber');",
+                        "});",
+                        "",
+                        "if (json.transferId) {",
+                        "    pm.collectionVariables.set('transferId', json.transferId);",
+                        "    pm.collectionVariables.set('fromAccountNumber', json.fromAccountNumber);",
+                        "    pm.collectionVariables.set('toAccountNumber', json.toAccountNumber);",
+                        "}"
+                      ]
+                    }
                   }
-                }
-              ]
+                ]
+              }
             },
             {
               "name": "Transfer - Direct to payment-service",
@@ -281,7 +285,7 @@
                     }
                   }
                 },
-                "description": "Expected 400: 'Insufficient balance or source account is inactive.' Accounts are created with balance 0, so raise the source account balance in the DB first (see collection description)."
+                "description": "Expected 400: 'Insufficient balance or source account is inactive.' Accounts are created with balance 0, so deposit first or raise the source account balance in the DB (see collection description)."
               }
             },
             {
@@ -347,7 +351,7 @@
                     }
                   }
                 },
-                "description": "Bean validation: `@DecimalMax(10000.00)` -> 'The amount cannot exceed 10,000 MAD'."
+                "description": "Bean validation: `@DecimalMax(10000.00)` on TransferRequest -> 'The amount cannot exceed 10,000 MAD'. Note: this guard lives in payment-service; fraud-service independently REJECTs high amounts over its own HIGH_AMOUNT config threshold (default 10,000 MAD)."
               }
             },
             {
@@ -484,26 +488,26 @@
                 "{{transferId}}"
               ]
             },
-            "description": "Fetch a single payment by UUID. The {{transferId}} variable is set automatically by 'Transfer - Happy Path (via Gateway)'. Expected: PaymentDto with status, amount, accountId, createdAt."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "pm.test(\"Has id and status\", function () {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json).to.have.property('id');",
-                  "    pm.expect(json).to.have.property('status');",
-                  "});"
-                ]
+            "description": "Fetch a single payment by UUID. The {{transferId}} variable is set automatically by 'Transfer - Happy Path (via Gateway)'. Expected: PaymentDto with status, amount, accountId, createdAt.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "pm.test(\"Has id and status\", function () {",
+                    "    const json = pm.response.json();",
+                    "    pm.expect(json).to.have.property('id');",
+                    "    pm.expect(json).to.have.property('status');",
+                    "});"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Payment Stats",
@@ -520,27 +524,27 @@
                 "stats"
               ]
             },
-            "description": "Aggregated stats: totalPayments, totalAmount, successful/pending/failed counts and amounts, averageAmount, paymentsByStatus map."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "pm.test(\"Has stats fields\", function () {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json).to.have.property('totalPayments');",
-                  "    pm.expect(json).to.have.property('totalAmount');",
-                  "    pm.expect(json).to.have.property('paymentsByStatus');",
-                  "});"
-                ]
+            "description": "Aggregated stats: totalPayments, totalAmount, successful/pending/failed counts and amounts, averageAmount, paymentsByStatus map.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "pm.test(\"Has stats fields\", function () {",
+                    "    const json = pm.response.json();",
+                    "    pm.expect(json).to.have.property('totalPayments');",
+                    "    pm.expect(json).to.have.property('totalAmount');",
+                    "    pm.expect(json).to.have.property('paymentsByStatus');",
+                    "});"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "SSE - Subscribe to payment stream",
@@ -583,24 +587,24 @@
                 "health"
               ]
             },
-            "description": "Spring Boot Actuator endpoint exposed by payment-service (management.endpoints.web.exposure.include)."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "pm.test(\"Health is UP\", function () {",
-                  "    pm.expect(pm.response.json().status).to.eql('UP');",
-                  "});"
-                ]
+            "description": "Spring Boot Actuator endpoint exposed by payment-service (management.endpoints.web.exposure.include).",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "pm.test(\"Health is UP\", function () {",
+                    "    pm.expect(pm.response.json().status).to.eql('UP');",
+                    "});"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Actuator - info",
@@ -616,21 +620,21 @@
                 "info"
               ]
             },
-            "description": "Spring Boot Actuator endpoint exposed by payment-service (management.endpoints.web.exposure.include)."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});"
-                ]
+            "description": "Spring Boot Actuator endpoint exposed by payment-service (management.endpoints.web.exposure.include).",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Actuator - metrics",
@@ -646,58 +650,27 @@
                 "metrics"
               ]
             },
-            "description": "Spring Boot Actuator endpoint exposed by payment-service (management.endpoints.web.exposure.include)."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});"
-                ]
+            "description": "Spring Boot Actuator endpoint exposed by payment-service (management.endpoints.web.exposure.include).",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});"
+                  ]
+                }
               }
-            }
-          ]
-        },
-        {
-          "name": "Actuator - metrics/jvm.memory.used",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{paymentServiceUrl}}/actuator/metrics/jvm.memory.used",
-              "host": [
-                "{{paymentServiceUrl}}"
-              ],
-              "path": [
-                "actuator",
-                "metrics",
-                "jvm.memory.used"
-              ]
-            },
-            "description": "Spring Boot Actuator endpoint exposed by payment-service (management.endpoints.web.exposure.include)."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});"
-                ]
-              }
-            }
-          ]
+            ]
+          }
         }
       ]
     },
     {
       "name": "Accounts",
-      "description": "Account management under /api/accounts/**. NOT routed by the gateway (only /api/payments/** is), so call payment-service directly on {{paymentServiceUrl}}. Account numbers are auto-generated (ACC-########). New accounts start with balance = 0, status = ACTIVE. The {{accountId}} and {{accountNumber}} variables are set automatically by \"Create Account\".\n\nLifecycle: ACTIVE -> deactivate -> INACTIVE, ACTIVE/INACTIVE -> block -> BLOCKED, unblock -> ACTIVE. An account can only be closed (DELETE or POST /close) when its balance is zero. Deposit/withdraw mutate the balance directly. The statement lists payments where the account is the source (DEBIT) or destination (CREDIT).",
+      "description": "Account management under /api/accounts/** — routed through the gateway (→ payment-service) and also reachable directly on {{paymentServiceUrl}}. Account numbers are auto-generated (ACC-########). New accounts start with balance = 0, status = ACTIVE. The {{accountId}} and {{accountNumber}} variables are set automatically by \"Create Account\".\n\nLifecycle: ACTIVE -> deactivate -> INACTIVE, ACTIVE/INACTIVE -> block -> BLOCKED, unblock -> ACTIVE. An account can only be closed (DELETE or POST /close) when its balance is zero. Deposit/withdraw mutate the balance directly. The statement lists payments where the account is the source (DEBIT) or destination (CREDIT).",
       "item": [
         {
           "name": "Create Account",
@@ -710,9 +683,9 @@
               }
             ],
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts",
+              "raw": "{{gatewayUrl}}/api/accounts",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -728,38 +701,37 @@
                 }
               }
             },
-            "description": "Creates an account. Expected 201 CREATED with AccountDto (auto-generated accountNumber, balance=0, status=ACTIVE). Stores accountNumber to the {{accountNumber}} variable."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 201\", function () {",
-                  "    pm.response.to.have.status(201);",
-                  "});",
-                  "",
-                  "const json = pm.response.json();",
-                  "",
-                  "pm.test(\"AccountDto shape\", function () {",
-                  "    pm.expect(json).to.have.property('accountNumber');",
-                  "    pm.expect(json.balance).to.eql(0);",
-                  "    pm.expect(json.status).to.eql('ACTIVE');",
-                  "    pm.expect(json.currency).to.eql('MAD');",
-                  "});",
-                  "",
-                  "if (json.id) {",
-                  "    pm.collectionVariables.set('accountId', json.id);",
-                  "}",
-                  "if (json.accountNumber) {",
-                  "    pm.collectionVariables.set('accountNumber', json.accountNumber);",
-                  "}"
-                ]
+            "description": "Creates an account. Expected 201 CREATED with AccountDto (auto-generated accountNumber, balance=0, status=ACTIVE, currency=MAD). Stores id -> {{accountId}} and accountNumber -> {{accountNumber}}.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 201\", function () {",
+                    "    pm.response.to.have.status(201);",
+                    "});",
+                    "",
+                    "const json = pm.response.json();",
+                    "",
+                    "pm.test(\"AccountDto shape\", function () {",
+                    "    pm.expect(json).to.have.property('accountNumber');",
+                    "    pm.expect(json.balance).to.eql(0);",
+                    "    pm.expect(json.status).to.eql('ACTIVE');",
+                    "    pm.expect(json.currency).to.eql('MAD');",
+                    "});",
+                    "",
+                    "if (json.id) {",
+                    "    pm.collectionVariables.set('accountId', json.id);",
+                    "}",
+                    "if (json.accountNumber) {",
+                    "    pm.collectionVariables.set('accountNumber', json.accountNumber);",
+                    "}"
+                  ]
+                }
               }
-            }
-          ],
-          "description": "Creates an account. Expected 201 CREATED with AccountDto (auto-generated accountNumber, balance=0, status=ACTIVE, currency=MAD). Stores id -> {{accountId}} and accountNumber -> {{accountNumber}}."
+            ]
+          }
         },
         {
           "name": "Create Account - Duplicate email",
@@ -772,9 +744,9 @@
               }
             ],
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts",
+              "raw": "{{gatewayUrl}}/api/accounts",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -804,9 +776,9 @@
               }
             ],
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts",
+              "raw": "{{gatewayUrl}}/api/accounts",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -830,9 +802,9 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts?page=0&size=20&sort=createdAt,desc&status=&ownerEmail=",
+              "raw": "{{gatewayUrl}}/api/accounts?page=0&size=20&sort=createdAt,desc&status=&ownerEmail=",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -863,35 +835,35 @@
                 }
               ]
             },
-            "description": "Paginated list of accounts with optional filters: ?status=ACTIVE and/or ?ownerEmail=... (partial match, case-insensitive). Default page size=20, sort=createdAt,desc."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "pm.test(\"Returns a Page\", function () {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json).to.have.property('content');",
-                  "    pm.expect(json).to.have.property('totalElements');",
-                  "});"
-                ]
+            "description": "Paginated list of accounts with optional filters: ?status=ACTIVE and/or ?ownerEmail=... (partial match, case-insensitive). Default page size=20, sort=createdAt,desc.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "pm.test(\"Returns a Page\", function () {",
+                    "    const json = pm.response.json();",
+                    "    pm.expect(json).to.have.property('content');",
+                    "    pm.expect(json).to.have.property('totalElements');",
+                    "});"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Get Account by ID",
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/{{accountId}}",
+              "raw": "{{gatewayUrl}}/api/accounts/{{accountId}}",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -899,32 +871,32 @@
                 "{{accountId}}"
               ]
             },
-            "description": "Fetch a single account by UUID ({{accountId}}), set by \"Create Account\". Returns AccountDto."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "const json = pm.response.json();",
-                  "pm.expect(json).to.have.property('accountNumber');"
-                ]
+            "description": "Fetch a single account by UUID ({{accountId}}), set by \"Create Account\". Returns AccountDto.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "const json = pm.response.json();",
+                    "pm.expect(json).to.have.property('accountNumber');"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Get Account by Account Number",
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/number/{{accountNumber}}",
+              "raw": "{{gatewayUrl}}/api/accounts/number/{{accountNumber}}",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -933,32 +905,32 @@
                 "{{accountNumber}}"
               ]
             },
-            "description": "Fetch an account by its auto-generated number ({{accountNumber}})."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "const json = pm.response.json();",
-                  "pm.expect(json.accountNumber).to.eql(pm.collectionVariables.get('accountNumber'));"
-                ]
+            "description": "Fetch an account by its auto-generated number ({{accountNumber}}).",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "const json = pm.response.json();",
+                    "pm.expect(json.accountNumber).to.eql(pm.collectionVariables.get('accountNumber'));"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Get Account by Email",
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/by-email/yassine@example.com",
+              "raw": "{{gatewayUrl}}/api/accounts/by-email/yassine@example.com",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -967,32 +939,32 @@
                 "yassine@example.com"
               ]
             },
-            "description": "Fetch an account by the unique owner email. Expected 400 if it does not exist."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "const json = pm.response.json();",
-                  "pm.expect(json.ownerEmail).to.include('@example.com');"
-                ]
+            "description": "Fetch an account by the unique owner email. Expected 400 if it does not exist.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "const json = pm.response.json();",
+                    "pm.expect(json.ownerEmail).to.include('@example.com');"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Update Account (PUT)",
           "request": {
             "method": "PUT",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/{{accountId}}",
+              "raw": "{{gatewayUrl}}/api/accounts/{{accountId}}",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -1015,32 +987,32 @@
                 }
               }
             },
-            "description": "Full update. Only non-null fields are applied. Expected 200 with updated AccountDto."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "const json = pm.response.json();",
-                  "pm.expect(json.currency).to.eql('EUR');"
-                ]
+            "description": "Full update. Only non-null fields are applied. Expected 200 with updated AccountDto.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "const json = pm.response.json();",
+                    "pm.expect(json.currency).to.eql('EUR');"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Update Account (PATCH)",
           "request": {
             "method": "PATCH",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/{{accountId}}",
+              "raw": "{{gatewayUrl}}/api/accounts/{{accountId}}",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -1063,32 +1035,32 @@
                 }
               }
             },
-            "description": "Partial update — only the provided fields are applied."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "const json = pm.response.json();",
-                  "pm.expect(json.ownerName).to.include('Patched');"
-                ]
+            "description": "Partial update — only the provided fields are applied.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "const json = pm.response.json();",
+                    "pm.expect(json.ownerName).to.include('Patched');"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Close Account (DELETE)",
           "request": {
             "method": "DELETE",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/{{accountId}}",
+              "raw": "{{gatewayUrl}}/api/accounts/{{accountId}}",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -1102,30 +1074,30 @@
                 "value": "application/json"
               }
             ],
-            "description": "Soft-closes the account (status -> CLOSED). Requires balance = 0, otherwise 400/409. Returns 204 No Content."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 204\", function () {",
-                  "    pm.response.to.have.status(204);",
-                  "});"
-                ]
+            "description": "Soft-closes the account (status -> CLOSED). Requires balance = 0, otherwise 400/409. Returns 204 No Content.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 204\", function () {",
+                    "    pm.response.to.have.status(204);",
+                    "});"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Activate",
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/{{accountId}}/activate",
+              "raw": "{{gatewayUrl}}/api/accounts/{{accountId}}/activate",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -1140,31 +1112,31 @@
                 "value": "application/json"
               }
             ],
-            "description": "ACTIVE transition. Only valid from INACTIVE (use /unblock from BLOCKED). Returns AccountDto."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "pm.expect(pm.response.json().status).to.eql('ACTIVE');"
-                ]
+            "description": "ACTIVE transition. Only valid from INACTIVE (use /unblock from BLOCKED). Returns AccountDto.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "pm.expect(pm.response.json().status).to.eql('ACTIVE');"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Deactivate",
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/{{accountId}}/deactivate",
+              "raw": "{{gatewayUrl}}/api/accounts/{{accountId}}/deactivate",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -1179,31 +1151,31 @@
                 "value": "application/json"
               }
             ],
-            "description": "INACTIVE transition. Only valid from ACTIVE. Returns AccountDto."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "pm.expect(pm.response.json().status).to.eql('INACTIVE');"
-                ]
+            "description": "INACTIVE transition. Only valid from ACTIVE. Returns AccountDto.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "pm.expect(pm.response.json().status).to.eql('INACTIVE');"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Block",
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/{{accountId}}/block",
+              "raw": "{{gatewayUrl}}/api/accounts/{{accountId}}/block",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -1218,31 +1190,31 @@
                 "value": "application/json"
               }
             ],
-            "description": "BLOCKED transition. Only valid from ACTIVE/INACTIVE (used by fraud flows). Returns AccountDto."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "pm.expect(pm.response.json().status).to.eql('BLOCKED');"
-                ]
+            "description": "BLOCKED transition. Only valid from ACTIVE/INACTIVE (used by fraud flows). Returns AccountDto.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "pm.expect(pm.response.json().status).to.eql('BLOCKED');"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Unblock",
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/{{accountId}}/unblock",
+              "raw": "{{gatewayUrl}}/api/accounts/{{accountId}}/unblock",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -1257,31 +1229,31 @@
                 "value": "application/json"
               }
             ],
-            "description": "ACTIVE transition from BLOCKED. Returns AccountDto."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "pm.expect(pm.response.json().status).to.eql('ACTIVE');"
-                ]
+            "description": "ACTIVE transition from BLOCKED. Returns AccountDto.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "pm.expect(pm.response.json().status).to.eql('ACTIVE');"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Close (POST endpoint)",
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/{{accountId}}/close",
+              "raw": "{{gatewayUrl}}/api/accounts/{{accountId}}/close",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -1296,31 +1268,31 @@
                 "value": "application/json"
               }
             ],
-            "description": "CLOSED transition (same rule as DELETE: balance must be 0). Returns AccountDto."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "pm.expect(pm.response.json().status).to.eql('CLOSED');"
-                ]
+            "description": "CLOSED transition (same rule as DELETE: balance must be 0). Returns AccountDto.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "pm.expect(pm.response.json().status).to.eql('CLOSED');"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Deposit",
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/{{accountId}}/deposit",
+              "raw": "{{gatewayUrl}}/api/accounts/{{accountId}}/deposit",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -1344,32 +1316,32 @@
                 }
               }
             },
-            "description": "Credits the account balance (amount > 0). Accounts start at 0 — use this to fund wallets for transfer tests. Returns AccountDto with the new balance."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "const json = pm.response.json();",
-                  "pm.expect(json.balance).to.be.gte(500);"
-                ]
+            "description": "Credits the account balance (amount > 0). Accounts start at 0 — use this to fund wallets for transfer tests. Returns AccountDto with the new balance.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "const json = pm.response.json();",
+                    "pm.expect(json.balance).to.be.gte(500);"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Withdraw",
           "request": {
             "method": "POST",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/{{accountId}}/withdraw",
+              "raw": "{{gatewayUrl}}/api/accounts/{{accountId}}/withdraw",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -1393,32 +1365,32 @@
                 }
               }
             },
-            "description": "Debits the account balance. Only ACTIVE accounts; amount must be <= balance. Returns AccountDto with the new balance."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "const json = pm.response.json();",
-                  "pm.expect(json.balance).to.be.lte(380);"
-                ]
+            "description": "Debits the account balance. Only ACTIVE accounts; amount must be <= balance. Returns AccountDto with the new balance.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "const json = pm.response.json();",
+                    "pm.expect(json.balance).to.be.lte(380);"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Get Balance",
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/{{accountId}}/balance",
+              "raw": "{{gatewayUrl}}/api/accounts/{{accountId}}/balance",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -1427,32 +1399,32 @@
                 "balance"
               ]
             },
-            "description": "Live balance snapshot: accountNumber, ownerName, balance, currency, status, updatedAt."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "const json = pm.response.json();",
-                  "pm.expect(json).to.have.property('balance');"
-                ]
+            "description": "Live balance snapshot: accountNumber, ownerName, balance, currency, status, updatedAt.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "const json = pm.response.json();",
+                    "pm.expect(json).to.have.property('balance');"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Get Statement",
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{paymentServiceUrl}}/api/accounts/{{accountId}}/statement",
+              "raw": "{{gatewayUrl}}/api/accounts/{{accountId}}/statement",
               "host": [
-                "{{paymentServiceUrl}}"
+                "{{gatewayUrl}}"
               ],
               "path": [
                 "api",
@@ -1475,29 +1447,467 @@
                 }
               ]
             },
-            "description": "Paginated statement of payments involving the account (source = DEBIT, destination = CREDIT). Query: page, size, sort."
-          },
-          "event": [
+            "description": "Paginated statement of payments involving the account (source = DEBIT, destination = CREDIT). Query: page, size, sort.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "const json = pm.response.json();",
+                    "pm.expect(json).to.have.property('entries');"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fraud Service",
+      "description": "fraud-service REST API under /api/fraud/** — routed through the gateway and also reachable directly on {{fraudServiceUrl}}. The detection engine consumes `fraud.fraud-check` (published by payment-service on transfer), evaluates the transaction against the current fraud_configs rules (FraudDecision APPROVED/REJECTED), persists a fraud_evaluations row and publishes the result onward for payment-service to finalize.\n\nConfiguration management (fraud_configs table): one row per rule type (HIGH_AMOUNT / REJECTION_RATE / VELOCITY). Defaults are seeded on startup; the detection reads them live. A config can be listed, created (one per rule type — otherwise conflict), updated, toggled on/off, deleted (rule then falls back to its built-in default) or reset to defaults. Use kafka-ui (http://localhost:8090) to inspect topics: payment.initiated, payment.processed, payment.failed, payment.DLT, payment.fraud, fraud.fraud-check, fraud.fraud-evaluated.",
+      "item": [
+        {
+          "name": "Fraud Configs",
+          "description": "CRUD for the fraud detection rules used by the evaluator.",
+          "item": [
             {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "const json = pm.response.json();",
-                  "pm.expect(json).to.have.property('entries');"
+              "name": "Configs - List",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/fraud/configs",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "fraud",
+                    "configs"
+                  ]
+                },
+                "description": "Lists all fraud configs (sorted by ruleType). Each item: id (UUID), ruleType (HIGH_AMOUNT|REJECTION_RATE|VELOCITY), enabled, threshold, windowMinutes, description, updatedBy, createdAt, updatedAt. Stores the first config id in {{fraudConfigId}} for the other requests.",
+                "event": [
+                  {
+                    "listen": "test",
+                    "script": {
+                      "type": "text/javascript",
+                      "exec": [
+                        "pm.test(\"Status is 200\", function () {",
+                        "    pm.response.to.have.status(200);",
+                        "});",
+                        "const json = pm.response.json();",
+                        "pm.test(\"Returns an array of configs\", function () {",
+                        "    pm.expect(json).to.be.an('array');",
+                        "    if (json.length > 0) {",
+                        "        pm.collectionVariables.set('fraudConfigId', json[0].id);",
+                        "        pm.expect(json[0]).to.have.property('ruleType');",
+                        "        pm.expect(json[0]).to.have.property('threshold');",
+                        "        pm.expect(json[0]).to.have.property('enabled');",
+                        "    }",
+                        "});"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Configs - Get by ID",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/fraud/configs/{{fraudConfigId}}",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "fraud",
+                    "configs",
+                    "{{fraudConfigId}}"
+                  ]
+                },
+                "description": "Fetch a single fraud config by UUID ({{fraudConfigId}}, set by 'Configs - List').",
+                "event": [
+                  {
+                    "listen": "test",
+                    "script": {
+                      "type": "text/javascript",
+                      "exec": [
+                        "pm.test(\"Status is 200\", function () {",
+                        "    pm.response.to.have.status(200);",
+                        "});",
+                        "const json = pm.response.json();",
+                        "pm.test(\"Has id and ruleType\", function () {",
+                        "    pm.expect(json).to.have.property('id');",
+                        "    pm.expect(json).to.have.property('ruleType');",
+                        "});"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Configs - Create",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/fraud/configs",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "fraud",
+                    "configs"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"ruleType\": \"HIGH_AMOUNT\",\n    \"enabled\": true,\n    \"threshold\": 15000.00,\n    \"windowMinutes\": 60,\n    \"description\": \"Custom high-amount limit\",\n    \"updatedBy\": \"admin\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Creates a fraud config. Expected 201 CREATED. Only one config per ruleType: since the three defaults are seeded on startup, expect 400 'A fraud config already exists for rule type: HIGH_AMOUNT' — delete an existing rule first (or use PUT /{id} to modify it instead). Count-based rules (REJECTION_RATE, VELOCITY) require a whole-number threshold and windowMinutes. Sets {{fraudConfigId}} on success.",
+                "event": [
+                  {
+                    "listen": "test",
+                    "script": {
+                      "type": "text/javascript",
+                      "exec": [
+                        "pm.test(\"Created or conflict\", function () {",
+                        "    pm.expect([201, 400]).to.include(pm.response.code);",
+                        "});",
+                        "const json = pm.response.json();",
+                        "if (pm.response.code === 201) {",
+                        "    pm.collectionVariables.set('fraudConfigId', json.id);",
+                        "    pm.test(\"Created config shape\", function () {",
+                        "        pm.expect(json).to.have.property('id');",
+                        "        pm.expect(json.ruleType).to.eql('HIGH_AMOUNT');",
+                        "        pm.expect(json.enabled).to.eql(true);",
+                        "    });",
+                        "}"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Configs - Update (PUT)",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/fraud/configs/{{fraudConfigId}}",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "fraud",
+                    "configs",
+                    "{{fraudConfigId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n    \"enabled\": true,\n    \"threshold\": 20000.00,\n    \"description\": \"Updated high-amount limit\",\n    \"updatedBy\": \"admin\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Modifies a fraud config — only non-null fields are applied. Expected 200 with the updated FraudConfigDto. Tweak the threshold (e.g. 20,000 MAD) and observe the HIGH_AMOUNT rule change on the next transfer above the new value.",
+                "event": [
+                  {
+                    "listen": "test",
+                    "script": {
+                      "type": "text/javascript",
+                      "exec": [
+                        "pm.test(\"Status is 200\", function () {",
+                        "    pm.response.to.have.status(200);",
+                        "});",
+                        "const json = pm.response.json();",
+                        "pm.test(\"Threshold updated\", function () {",
+                        "    pm.expect(json.threshold).to.eql(20000.0);",
+                        "});"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Configs - Toggle",
+              "request": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/fraud/configs/{{fraudConfigId}}/toggle",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "fraud",
+                    "configs",
+                    "{{fraudConfigId}}",
+                    "toggle"
+                  ]
+                },
+                "description": "Flips the `enabled` flag. A disabled rule is ignored by the evaluator. Expected 200 with the updated FraudConfigDto.",
+                "event": [
+                  {
+                    "listen": "test",
+                    "script": {
+                      "type": "text/javascript",
+                      "exec": [
+                        "pm.test(\"Status is 200\", function () {",
+                        "    pm.response.to.have.status(200);",
+                        "});",
+                        "const json = pm.response.json();",
+                        "pm.test(\"Enabled is a boolean\", function () {",
+                        "    pm.expect(json).to.have.property('enabled');",
+                        "    pm.expect(json.enabled).to.be.a('boolean');",
+                        "});"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Configs - Delete",
+              "request": {
+                "method": "DELETE",
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/fraud/configs/{{fraudConfigId}}",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "fraud",
+                    "configs",
+                    "{{fraudConfigId}}"
+                  ]
+                },
+                "description": "Deletes a fraud config. Expected 204 No Content. The related rule then falls back to its built-in default during evaluation; the seeder re-creates missing defaults on the next fraud-service restart.",
+                "event": [
+                  {
+                    "listen": "test",
+                    "script": {
+                      "type": "text/javascript",
+                      "exec": [
+                        "pm.test(\"Status is 204\", function () {",
+                        "    pm.response.to.have.status(204);",
+                        "});"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Configs - Reset defaults",
+              "request": {
+                "method": "POST",
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/fraud/configs/defaults",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "fraud",
+                    "configs",
+                    "defaults"
+                  ]
+                },
+                "description": "Resets every rule to its default threshold/window and re-creates any missing rules: HIGH_AMOUNT=10000 MAD, REJECTION_RATE=3 rejects / 60 min, VELOCITY=10 payments / 60 min. All rules are re-enabled. Returns the full config list.",
+                "event": [
+                  {
+                    "listen": "test",
+                    "script": {
+                      "type": "text/javascript",
+                      "exec": [
+                        "pm.test(\"Status is 200\", function () {",
+                        "    pm.response.to.have.status(200);",
+                        "});",
+                        "const json = pm.response.json();",
+                        "pm.test(\"All three rules present\", function () {",
+                        "    pm.expect(json).to.be.an('array');",
+                        "    pm.expect(json.length).to.be.gte(3);",
+                        "});"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Fraud Evaluations",
+          "description": "Read-only views of detection results.",
+          "item": [
+            {
+              "name": "Evaluations - List",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/fraud/evaluations?rejectedOnly=false&limit=50",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "fraud",
+                    "evaluations"
+                  ],
+                  "query": [
+                    {
+                      "key": "rejectedOnly",
+                      "value": "false",
+                      "description": "Optional. true = only REJECTED decisions"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "50",
+                      "description": "Optional. Number of rows, clamped to 0..500 (default 100)"
+                    }
+                  ]
+                },
+                "description": "Latest fraud evaluations, newest first. Each item: id, paymentId, accountId, amount, currency, decision (APPROVED|REJECTED), reason, evaluatedAt.",
+                "event": [
+                  {
+                    "listen": "test",
+                    "script": {
+                      "type": "text/javascript",
+                      "exec": [
+                        "pm.test(\"Status is 200\", function () {",
+                        "    pm.response.to.have.status(200);",
+                        "});",
+                        "const json = pm.response.json();",
+                        "pm.test(\"Returns an array\", function () {",
+                        "    pm.expect(json).to.be.an('array');",
+                        "    if (json.length > 0) {",
+                        "        pm.expect(json[0]).to.have.property('paymentId');",
+                        "        pm.expect(json[0]).to.have.property('decision');",
+                        "    }",
+                        "});"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Evaluations - Rejected only",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/fraud/evaluations?rejectedOnly=true&limit=50",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "fraud",
+                    "evaluations"
+                  ],
+                  "query": [
+                    {
+                      "key": "rejectedOnly",
+                      "value": "true"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "50"
+                    }
+                  ]
+                },
+                "description": "Same as list but only REJECTED evaluations (the fraud alerts shown in the UI).",
+                "event": [
+                  {
+                    "listen": "test",
+                    "script": {
+                      "type": "text/javascript",
+                      "exec": [
+                        "pm.test(\"Status is 200\", function () {",
+                        "    pm.response.to.have.status(200);",
+                        "});",
+                        "const json = pm.response.json();",
+                        "pm.test(\"All decisions are REJECTED\", function () {",
+                        "    pm.expect(json.every(e => e.decision === 'REJECTED')).to.be.true;",
+                        "});"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "Evaluations - Stats",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/fraud/stats",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "fraud",
+                    "stats"
+                  ]
+                },
+                "description": "Aggregated counters: totalEvaluations, approvedCount, rejectedCount.",
+                "event": [
+                  {
+                    "listen": "test",
+                    "script": {
+                      "type": "text/javascript",
+                      "exec": [
+                        "pm.test(\"Status is 200\", function () {",
+                        "    pm.response.to.have.status(200);",
+                        "});",
+                        "const json = pm.response.json();",
+                        "pm.test(\"Has stats fields\", function () {",
+                        "    pm.expect(json).to.have.property('totalEvaluations');",
+                        "    pm.expect(json).to.have.property('approvedCount');",
+                        "    pm.expect(json).to.have.property('rejectedCount');",
+                        "});"
+                      ]
+                    }
+                  }
                 ]
               }
             }
           ]
         }
       ]
-    },
-    {
-      "name": "Fraud Service",
-      "description": "fraud-service exposes NO REST endpoints. It consumes `payment.initiated` (via fraud.fraud-check flow), evaluates the transaction (FraudDecision APPROVED/REJECTED), and publishes the result back for payment-service to finalize. Use kafka-ui (http://localhost:8090) to inspect topics: payment.initiated, payment.processed, payment.failed, payment.DLT, payment.fraud, fraud.fraud-check, fraud.fraud-evaluated."
     },
     {
       "name": "Infrastructure",
@@ -1516,21 +1926,21 @@
                 ""
               ]
             },
-            "description": "Eureka dashboard HTML. Shows registered instances of payment-service, fraud-service, paytrack-gateway."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});"
-                ]
+            "description": "Eureka dashboard HTML. Shows registered instances of payment-service, fraud-service, paytrack-gateway.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Eureka - Registered applications (JSON)",
@@ -1546,24 +1956,24 @@
                 "apps"
               ]
             },
-            "description": "Returns JSON of all registered services. `applications.application` should include PAYMENT-SERVICE, FRAUD-SERVICE, PAYTRACK-GATEWAY."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "pm.test(\"Has applications\", function () {",
-                  "    pm.expect(pm.response.json()).to.have.property('applications');",
-                  "});"
-                ]
+            "description": "Returns JSON of all registered services. `applications.application` should include PAYMENT-SERVICE, FRAUD-SERVICE, PAYTRACK-GATEWAY.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "pm.test(\"Has applications\", function () {",
+                    "    pm.expect(pm.response.json()).to.have.property('applications');",
+                    "});"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Eureka - Payment Service instance",
@@ -1597,24 +2007,24 @@
                 "default"
               ]
             },
-            "description": "Configuration served for payment-service (datasource, kafka, eureka)."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"Status is 200\", function () {",
-                  "    pm.response.to.have.status(200);",
-                  "});",
-                  "pm.test(\"Contains propertySources\", function () {",
-                  "    pm.expect(pm.response.json()).to.have.property('propertySources');",
-                  "});"
-                ]
+            "description": "Configuration served for payment-service (datasource, kafka, eureka).",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "type": "text/javascript",
+                  "exec": [
+                    "pm.test(\"Status is 200\", function () {",
+                    "    pm.response.to.have.status(200);",
+                    "});",
+                    "pm.test(\"Contains propertySources\", function () {",
+                    "    pm.expect(pm.response.json()).to.have.property('propertySources');",
+                    "});"
+                  ]
+                }
               }
-            }
-          ]
+            ]
+          }
         },
         {
           "name": "Config Server - fraud-service config",

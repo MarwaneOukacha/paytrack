@@ -4,11 +4,11 @@
 # What this does:
 #   Every time you push to the 'main' branch (or click the
 #   "Run workflow" button in the Actions tab), GitHub Actions
-#   will SSH into your EC2 server, pull the latest code,
+#   will SSH into my EC2 server, pull the latest code,
 #   build the JARs with Maven, and run Docker Compose.
 #
 # Required GitHub Secrets (repo -> Settings -> Secrets):
-#   EC2_HOST      = your server's Public IPv4 address
+#   EC2_HOST      = my server's Public IPv4 address
 #   EC2_USERNAME  = ubuntu
 #   EC2_SSH_KEY   = full contents of paytrack-key.pem
 # ============================================================
@@ -33,7 +33,7 @@ jobs:
       # Step 1: Connect to the EC2 server with SSH and do the
       # whole deploy in one remote script.
       # appleboy/ssh-action opens an SSH connection using the
-      # secrets you stored in GitHub. The 'script' field runs
+      # secrets i stored in GitHub. The 'script' field runs
       # on the server itself (not on GitHub's machine).
       # ------------------------------------------------------
       - name: Pull, build, and start the stack on EC2
