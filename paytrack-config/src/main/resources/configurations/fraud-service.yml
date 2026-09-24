@@ -12,6 +12,12 @@ spring:
       ddl-auto: update
     show-sql: true
 
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://keycloak:8080/realms/paytrack/protocol/openid-connect/certs
+
   kafka:
     bootstrap-servers: kafka:29092
 

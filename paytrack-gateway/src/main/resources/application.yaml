@@ -49,7 +49,11 @@ spring:
             - Path=/payment-service/swagger-ui/**
           filters:
             - RewritePath=/payment-service/swagger-ui/(?<segment>.*), /swagger-ui/$\{segment}
-
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://keycloak:8080/realms/paytrack/protocol/openid-connect/certs
 eureka:
   client:
     service-url:

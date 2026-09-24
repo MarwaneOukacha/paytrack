@@ -79,6 +79,21 @@ services:
     networks:
       - paytrack-network
 
+  # =========================================================
+  # keycloak
+  # =========================================================
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: keycloak
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8088:8080"
+    networks:
+      - paytrack-network
 
   # =========================================================
   # KAFKA
@@ -257,9 +272,6 @@ services:
       registry:
         condition: service_healthy
 
-    ports:
-      - "8082:8080"
-
     volumes:
       - ./logs:/app/logs
 
@@ -308,9 +320,6 @@ services:
       registry:
         condition: service_healthy
 
-    ports:
-      - "8081:8081"
-
     volumes:
       - ./logs:/app/logs
 
@@ -357,6 +366,8 @@ services:
         condition: service_started
 
       fraud-service:
+        condition: service_started
+      keycloak:
         condition: service_started
 
     ports:
