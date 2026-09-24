@@ -21,10 +21,34 @@ spring:
           predicates:
             - Path=/api/accounts/**
 
+        - id: card-service
+          uri: lb://payment-service
+          predicates:
+            - Path=/api/cards/**
+
+        - id: payment-config-service
+          uri: lb://payment-service
+          predicates:
+            - Path=/api/configs/**
+
         - id: fraud-service
           uri: lb://fraud-service
           predicates:
             - Path=/api/fraud/**
+
+        - id: payment-api-docs
+          uri: lb://payment-service
+          predicates:
+            - Path=/payment-service/v3/api-docs/**,/payment-service/v3/api-docs
+          filters:
+            - RewritePath=/payment-service/v3/api-docs(?<segment>/?.*), /v3/api-docs$\{segment}
+
+        - id: payment-swagger-ui
+          uri: lb://payment-service
+          predicates:
+            - Path=/payment-service/swagger-ui/**
+          filters:
+            - RewritePath=/payment-service/swagger-ui/(?<segment>.*), /swagger-ui/$\{segment}
 
 eureka:
   client:
@@ -32,6 +56,13 @@ eureka:
       defaultZone: http://registry:8761/eureka/
   instance:
     prefer-ip-address: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    urls:
+      - name: payment-service
+        url: /payment-service/v3/api-docs
 
 logging:
   level:
